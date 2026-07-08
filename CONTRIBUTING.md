@@ -12,7 +12,7 @@ Thanks for your interest in improving MCP security tooling.
 ### Setup
 
 ```bash
-git clone https://github.com/anomalyco/mcp-seatbelt.git
+git clone https://github.com/KryptosAI/mcp-seatbelt.git
 cd mcp-seatbelt
 npm install
 ```

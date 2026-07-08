@@ -187,10 +187,10 @@ For enterprise licensing, hosted observatory, or custom integrations:
 
 - **Only MCP security platform** that covers pre-install scanning AND runtime enforcement — everybody else does one or the other
 - **20 total security checks** — 13 risk rules in observatory plus 7 policy rules in seatbelt
-- **686 tests** across both tools (212 in observatory + 474 in seatbelt) ensuring reliability at every layer
+- **686 tests** across both tools (474 in observatory + 212 in seatbelt) ensuring reliability at every layer
 - **8 client detectors** — auto-discovers MCP configs in Cursor, Claude Desktop, VS Code, Windsurf, ChatGPT Desktop, JetBrains, Codex, and project-local configs
 - **9 check modules** covering shell interpreters, docker sandboxing, network tools, process spawning, destructive filesystem ops, remote access, sensitive environment variables, package runner risks, and privilege escalation
-- **30 CLI commands** across both tools (22 in observatory + 8 in seatbelt) covering every security workflow
+- **29 CLI commands** across both tools (22 in observatory + 7 in seatbelt) covering every security workflow
 - **Open source (MIT)**, npm-native, zero external dependencies beyond what you already trust
 - **CI/CD ready** with SARIF export, non-zero exit codes on failure, and GitHub Actions workflow templates
 - **Already listed** in the awesome-mcp-servers Security section — the ecosystem's canonical reference

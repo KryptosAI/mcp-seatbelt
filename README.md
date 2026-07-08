@@ -31,7 +31,7 @@ AI coding agents (Cursor, Claude, VS Code, ChatGPT, Windsurf, and others) connec
 
 - **Policy engine with time-windowed rules, learning mode, rule inheritance, and context awareness** — Rules support regex pattern matching, exact-match, and substring containment. Restrict tool access by day of week and hour range (`timeWindow`). Condition rules on client identity or request rate (`contextCondition`). Policies can `extend` parent templates. The `audit` mode serves as a learning mode: run it to observe actual tool usage before switching to `enforce`.
 
-- **Live dashboard, SARIF reports, CI/CD integration, and observatory bridge** — A real-time HTML dashboard shows request stats, block rates, connected clients, and recent blocked calls. Generate SARIF 2.1.0 reports for GitHub Code Scanning. Import security findings from [mcp-observatory](https://github.com/anomalyco/mcp-observatory) and automatically convert them to policy rules. `mcp-seatbelt check` exits non-zero in CI when critical risks are detected.
+- **Live dashboard, SARIF reports, CI/CD integration, and observatory bridge** — A real-time HTML dashboard shows request stats, block rates, connected clients, and recent blocked calls. Generate SARIF 2.1.0 reports for GitHub Code Scanning. Import security findings from [mcp-observatory](https://github.com/KryptosAI/mcp-observatory) and automatically convert them to policy rules. `mcp-seatbelt check` exits non-zero in CI when critical risks are detected.
 
 ---
 
@@ -207,7 +207,7 @@ After starting the proxy, update each client's MCP configuration to route throug
 
 ## Combined with mcp-observatory
 
-[mcp-observatory](https://github.com/anomalyco/mcp-observatory) scans MCP servers at rest — auditing source code, supply chain posture, and manifest hygiene. Seatbelt provides the runtime counterpart.
+[mcp-observatory](https://github.com/KryptosAI/mcp-observatory) scans MCP servers at rest — auditing source code, supply chain posture, and manifest hygiene. Seatbelt provides the runtime counterpart.
 
 **Workflow:**
 
@@ -239,12 +239,12 @@ The observatory bridge (`mergeObservatoryPolicy`) can merge findings into an exi
 - [x] SARIF 2.1.0 and markdown report generation
 - [x] mcp-observatory integration bridge
 - [x] CI/CD check command (`mcp-seatbelt check`)
-- [ ] Policy diff and migration tooling ([#12](https://github.com/anomalyco/mcp-seatbelt/issues/12))
-- [ ] Prometheus `/metrics` endpoint for observability stacks ([#15](https://github.com/anomalyco/mcp-seatbelt/issues/15))
-- [ ] OPA/Rego policy integration ([#18](https://github.com/anomalyco/mcp-seatbelt/issues/18))
-- [ ] Per-tool granularity — allow tool A but deny tool B on the same server ([#20](https://github.com/anomalyco/mcp-seatbelt/issues/20))
-- [ ] Persistent audit trail and request logging with SQLite ([#22](https://github.com/anomalyco/mcp-seatbelt/issues/22))
-- [ ] Plugin system for custom risk rules ([#25](https://github.com/anomalyco/mcp-seatbelt/issues/25))
+- [ ] Policy diff and migration tooling ([#12](https://github.com/KryptosAI/mcp-seatbelt/issues/12))
+- [ ] Prometheus `/metrics` endpoint for observability stacks ([#15](https://github.com/KryptosAI/mcp-seatbelt/issues/15))
+- [ ] OPA/Rego policy integration ([#18](https://github.com/KryptosAI/mcp-seatbelt/issues/18))
+- [ ] Per-tool granularity — allow tool A but deny tool B on the same server ([#20](https://github.com/KryptosAI/mcp-seatbelt/issues/20))
+- [ ] Persistent audit trail and request logging with SQLite ([#22](https://github.com/KryptosAI/mcp-seatbelt/issues/22))
+- [ ] Plugin system for custom risk rules ([#25](https://github.com/KryptosAI/mcp-seatbelt/issues/25))
 
 ---
 
@@ -260,4 +260,4 @@ See [`CONTRIBUTING.md`](./CONTRIBUTING.md) for development setup, testing instru
 
 ## License
 
-MIT — [mcp-seatbelt contributors](https://github.com/anomalyco/mcp-seatbelt/graphs/contributors)
+MIT — [mcp-seatbelt contributors](https://github.com/KryptosAI/mcp-seatbelt/graphs/contributors)
