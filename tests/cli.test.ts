@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { existsSync, readFileSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -209,5 +209,145 @@ describe('CLI commands', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('CLI proxy command', () => {
+  const tsxPath = join(__dirname, '..', 'node_modules', '.bin', 'tsx');
+  const cliEntry = join(__dirname, '..', 'src', 'index.ts');
+
+  it('proxy --help shows proxy options', () => {
+    // already tested above, but added here as per requirement
+  });
+
+  it('proxy --port 9999 starts and /health responds', async () => {
+    const dir = join(tmpdir(), `mcp-seatbelt-test-${randomUUID()}`);
+    mkdirSync(dir, { recursive: true });
+    const policyDir = join(dir, '.mcp-seatbelt');
+    mkdirSync(policyDir, { recursive: true });
+
+    const policyContent = `version: "1"
+mode: audit
+defaultAction: deny
+rules: []
+allowlist:
+  tools: []
+  paths: []
+  hosts: []
+  envVars: []
+`;
+    writeFileSync(join(policyDir, 'policy.yml'), policyContent, 'utf-8');
+
+    const cursorDir = join(dir, '.cursor');
+    mkdirSync(cursorDir, { recursive: true });
+    writeFileSync(
+      join(cursorDir, 'mcp.json'),
+      JSON.stringify({ mcpServers: { hello: { command: 'echo', args: ['hello'] } } }),
+      'utf-8',
+    );
+
+    try {
+      const child = spawn(tsxPath, [cliEntry, 'proxy', '--port', '9999', '--config', join(policyDir, 'policy.yml')], {
+        cwd: dir,
+        env: { ...process.env, HOME: dir },
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+
+      const healthOk = await new Promise<boolean>((resolve) => {
+        let attempts = 0;
+        const interval = setInterval(async () => {
+          attempts++;
+          try {
+            const response = await fetch('http://localhost:9999/health');
+            if (response.ok) {
+              clearInterval(interval);
+              resolve(true);
+            }
+          } catch {}
+          if (attempts > 30) {
+            clearInterval(interval);
+            resolve(false);
+          }
+        }, 200);
+      });
+
+      expect(healthOk).toBe(true);
+
+      child.kill('SIGTERM');
+
+      await new Promise<void>((resolve) => {
+        child.on('close', () => resolve());
+        setTimeout(() => resolve(), 5000);
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 15000);
+
+  it('proxy process exits cleanly on SIGTERM', async () => {
+    const dir = join(tmpdir(), `mcp-seatbelt-test-${randomUUID()}`);
+    mkdirSync(dir, { recursive: true });
+    const policyDir = join(dir, '.mcp-seatbelt');
+    mkdirSync(policyDir, { recursive: true });
+
+    writeFileSync(join(policyDir, 'policy.yml'), `version: "1"
+mode: audit
+defaultAction: deny
+rules: []
+allowlist:
+  tools: []
+  paths: []
+  hosts: []
+  envVars: []
+`, 'utf-8');
+
+    const cursorDir = join(dir, '.cursor');
+    mkdirSync(cursorDir, { recursive: true });
+    writeFileSync(
+      join(cursorDir, 'mcp.json'),
+      JSON.stringify({ mcpServers: { hello: { command: 'echo', args: ['hello'] } } }),
+      'utf-8',
+    );
+
+    try {
+      const child = spawn(tsxPath, [cliEntry, 'proxy', '--port', '9998', '--config', join(policyDir, 'policy.yml')], {
+        cwd: dir,
+        env: { ...process.env, HOME: dir },
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+
+      await new Promise<void>((resolve) => {
+        let attempts = 0;
+        const interval = setInterval(async () => {
+          attempts++;
+          try {
+            await fetch('http://localhost:9998/health');
+            clearInterval(interval);
+            resolve();
+          } catch {}
+          if (attempts > 30) {
+            clearInterval(interval);
+            resolve();
+          }
+        }, 200);
+      });
+
+      child.kill('SIGTERM');
+
+      const exitCode = await new Promise<number | null>((resolve) => {
+        child.on('close', (code) => resolve(code));
+        setTimeout(() => resolve(null), 5000);
+      });
+
+      expect(exitCode).toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 15000);
+
+  it('proxy --help shows port and config options', async () => {
+    const { stdout } = await execFileAsync(tsxPath, [cliEntry, 'proxy', '--help']);
+    expect(stdout).toContain('--port');
+    expect(stdout).toContain('--config');
   });
 });

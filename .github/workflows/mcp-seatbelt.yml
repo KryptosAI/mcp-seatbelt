@@ -91,6 +91,27 @@ jobs:
           path: .mcp-seatbelt/risk-report.md
           if-no-files-found: warn
 
+      - name: Generate SARIF report
+        if: always()
+        run: npx mcp-seatbelt report --sarif -o .mcp-seatbelt/report.sarif.json || true
+        continue-on-error: true
+
+      - name: Upload SARIF report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcp-seatbelt-sarif
+          path: .mcp-seatbelt/report.sarif.json
+          if-no-files-found: warn
+
+      - name: Upload SARIF to GitHub
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: .mcp-seatbelt/report.sarif.json
+          category: mcp-seatbelt
+        continue-on-error: true
+
       - name: Fail on critical risks
         if: steps.check.outcome == 'failure'
         run: exit 1

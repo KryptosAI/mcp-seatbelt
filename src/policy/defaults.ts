@@ -64,6 +64,14 @@ export const DEFAULT_POLICY: PolicyConfig = {
       action: 'deny',
     },
     {
+      id: 'redact-credentials',
+      description: 'Redact arguments whose key names contain credential-like patterns (password, secret, token, key, credential)',
+      target: 'command',
+      match: 'contains',
+      values: ['password', 'secret', 'token', 'key', 'credential'],
+      action: 'redact',
+    },
+    {
       id: 'block-private-network',
       description: 'Block outbound network requests to private and loopback address ranges',
       target: 'network',
@@ -101,12 +109,191 @@ export const DEFAULT_POLICY: PolicyConfig = {
       ],
       action: 'deny',
     },
+    {
+      id: 'allow-filesystem-writes-business-hours',
+      description: 'Allow filesystem writes only during business hours (Mon-Fri, 9-17)',
+      target: 'file',
+      match: 'pattern',
+      values: ['^\\.?(/|[A-Z]:\\\\)'],
+      action: 'allow',
+      timeWindow: {
+        days: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],
+        startHour: 9,
+        endHour: 17,
+      },
+    },
   ],
   allowlist: {
     tools: [],
     paths: [],
     hosts: [],
     envVars: [],
+  },
+  // allowSampling: true — sampling/createMessage allows MCP servers to request
+  // LLM completions from the AI client. Blocking would break most MCP server
+  // functionality. Set to false in high-security environments where server-
+  // initiated LLM calls are an exfiltration concern.
+  allowSampling: true,
+};
+
+export const DEFAULT_TEMPLATES: Record<string, PolicyConfig> = {
+  'minimal-workstation': {
+    version: '1',
+    mode: 'enforce',
+    defaultAction: 'allow',
+    allowSampling: false,
+    rules: [
+      {
+        id: 'block-shell-execution',
+        description: 'Block tools that invoke shell interpreters directly',
+        target: 'command',
+        match: 'pattern',
+        values: [
+          '^bash$',
+          '^sh$',
+          '^zsh$',
+          '^cmd$',
+          '^powershell$',
+          '^pwsh$',
+          '\\bbash\\s+-c\\b',
+          '\\bsh\\s+-c\\b',
+          '\\bzsh\\s+-c\\b',
+        ],
+        action: 'deny',
+      },
+      {
+        id: 'block-credential-access',
+        description: 'Block tools whose descriptions indicate credential or secret access',
+        target: 'command',
+        match: 'contains',
+        values: ['password', 'secret', 'token', 'api_key', 'credential', 'private key'],
+        action: 'deny',
+      },
+    ],
+    allowlist: {
+      tools: [],
+      paths: [],
+      hosts: [],
+      envVars: [],
+    },
+  },
+
+  'pci-compliance': {
+    version: '1',
+    mode: 'enforce',
+    defaultAction: 'deny',
+    allowSampling: false,
+    rules: [
+      {
+        id: 'block-shell-execution',
+        description: 'Block tools that invoke shell interpreters directly',
+        target: 'command',
+        match: 'pattern',
+        values: [
+          '^bash$',
+          '^sh$',
+          '^zsh$',
+          '^cmd$',
+          '^powershell$',
+          '^pwsh$',
+          '\\bbash\\s+-c\\b',
+          '\\bsh\\s+-c\\b',
+          '\\bzsh\\s+-c\\b',
+        ],
+        action: 'deny',
+      },
+      {
+        id: 'block-credential-access',
+        description: 'Block tools whose descriptions indicate credential or secret access',
+        target: 'command',
+        match: 'contains',
+        values: ['password', 'secret', 'token', 'api_key', 'credential', 'private key'],
+        action: 'deny',
+      },
+      {
+        id: 'block-cardholder-data-paths',
+        description: 'Block access to paths containing cardholder data per PCI DSS',
+        target: 'file',
+        match: 'pattern',
+        values: [
+          '\\b(chd|cardholder|pan|credit[_\\-]?card)\\b',
+          '\\bprimary[_\\-]?account[_\\-]?number\\b',
+          '\\bcvv\\b',
+          '\\bcvc\\b',
+          '\\bccv\\b',
+          '\\btrack[_\\-]?[12]\\b',
+        ],
+        action: 'deny',
+      },
+      {
+        id: 'block-pan-patterns',
+        description: 'Block card PAN patterns (Luhn-able number sequences)',
+        target: 'command',
+        match: 'pattern',
+        values: [
+          '\\b[45]\\d{3}[\\s\\-]?\\d{4}[\\s\\-]?\\d{4}[\\s\\-]?\\d{4}\\b',
+          '\\b3\\d{3}[\\s\\-]?\\d{6}[\\s\\-]?\\d{5}\\b',
+        ],
+        action: 'deny',
+      },
+      {
+        id: 'block-audit-trail-tampering',
+        description: 'Block modification of audit trails and log files per PCI DSS Requirement 10',
+        target: 'file',
+        match: 'pattern',
+        values: [
+          '\\baudit[_\\-]?log\\b',
+          '\\bsecurity[_\\-]?log\\b',
+          '\\baccess[_\\-]?log\\b',
+        ],
+        action: 'deny',
+      },
+    ],
+    allowlist: {
+      tools: [],
+      paths: [],
+      hosts: [],
+      envVars: [],
+    },
+  },
+
+  'strict-production': {
+    version: '1',
+    mode: 'enforce',
+    defaultAction: 'deny',
+    allowSampling: false,
+    rules: [
+      {
+        id: 'block-all-tools',
+        description: 'Block all tool invocations by default in strict production mode',
+        target: 'command',
+        match: 'pattern',
+        values: ['.*'],
+        action: 'deny',
+      },
+      {
+        id: 'deny-unknown-network',
+        description: 'Block all network requests in strict production mode',
+        target: 'network',
+        match: 'pattern',
+        values: ['.*'],
+        action: 'deny',
+      },
+      {
+        id: 'deny-all-filesystem',
+        description: 'Block all filesystem operations in strict production mode',
+        target: 'file',
+        match: 'pattern',
+        values: ['.*'],
+        action: 'deny',
+      },
+    ],
+    allowlist: {
+      tools: [],
+      paths: [],
+      hosts: [],
+      envVars: [],
+    },
   },
 };
 
@@ -139,6 +326,7 @@ export function generateDefaultPolicy(configs: McpClientConfig[], mode: string =
       hosts: [...allHosts],
       envVars: [],
     },
+    allowSampling: DEFAULT_POLICY.allowSampling,
   };
 }
 
@@ -154,8 +342,10 @@ export function generateDefaultPolicyFile(): string {
       match: rule.match,
       values: rule.values,
       action: rule.action,
+      ...(rule.timeWindow ? { timeWindow: rule.timeWindow } : {}),
     })),
     allowlist: DEFAULT_POLICY.allowlist,
+    allowSampling: DEFAULT_POLICY.allowSampling,
   };
 
   return [
@@ -173,6 +363,14 @@ export function generateDefaultPolicyFile(): string {
     '# Rules target: command | file | network | env | process',
     '# Rules match:  exact | pattern | contains',
     '# Rules action: allow | deny | warn',
+    '#',
+    '# timeWindow (optional): restrict rule to specific days/hours',
+    '#   days: list of day names (Monday-Sunday)',
+    '#   startHour/endHour: 0-23 hour range',
+    '#',
+    '# contextCondition (optional): restrict rule by client or rate',
+    '#   clientIn: list of client names to match',
+    '#   maxRequestsPerMinute: rate-limiting threshold',
     '',
     dump(policyForYaml, { indent: 2, lineWidth: -1, noRefs: true }),
   ].join('\n');

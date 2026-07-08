@@ -9,7 +9,7 @@ export interface McpServerConfig {
   command: string;
   args: string[];
   env?: Record<string, string>;
-  transport: "stdio" | "http" | "sse";
+  transport: "stdio" | "http" | "sse" | "streamable-http";
   url?: string;
   risk: RiskAssessment;
 }
@@ -32,7 +32,9 @@ export interface PolicyRule {
   target: "command" | "file" | "network" | "env" | "process";
   match: "exact" | "pattern" | "contains";
   values: string[];
-  action: "allow" | "deny" | "warn";
+  action: "allow" | "deny" | "warn" | "redact";
+  timeWindow?: { days?: string[]; startHour?: number; endHour?: number };
+  contextCondition?: { clientIn?: string[]; maxRequestsPerMinute?: number };
 }
 
 export interface PolicyConfig {
@@ -46,6 +48,8 @@ export interface PolicyConfig {
     hosts: string[];
     envVars: string[];
   };
+  allowSampling: boolean;
+  extends?: string[];
 }
 
 export interface RiskReport {
@@ -75,7 +79,7 @@ export interface ToolReport {
   name: string;
   description: string;
   riskFlags: RiskFlag[];
-  policyAction: "allow" | "deny" | "warn";
+  policyAction: "allow" | "deny" | "warn" | "redact";
 }
 
 export interface ProxyStats {
@@ -83,6 +87,7 @@ export interface ProxyStats {
   blocked: number;
   allowed: number;
   warned: number;
+  redacted: number;
   startTime: string;
   uptime: number;
 }

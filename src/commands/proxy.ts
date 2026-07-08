@@ -9,6 +9,8 @@ import { PolicyEngine } from "../policy/engine.js";
 export interface ProxyOptions {
   port: string;
   config: string;
+  authKey?: string;
+  rateLimit?: string;
 }
 
 export async function proxyCommand(opts: ProxyOptions): Promise<void> {
@@ -26,6 +28,12 @@ export async function proxyCommand(opts: ProxyOptions): Promise<void> {
 
   console.log(chalk.cyan("\n🔐 MCP Seatbelt Proxy"));
   console.log(chalk.dim(`Mode: ${policyConfig.mode} | Port: ${opts.port}`));
+  if (opts.authKey) {
+    console.log(chalk.dim(`API key auth: enabled`));
+  }
+  if (opts.rateLimit) {
+    console.log(chalk.dim(`Rate limit: ${opts.rateLimit} req/min`));
+  }
   console.log();
 
   const configs = await detectAll();
@@ -36,7 +44,16 @@ export async function proxyCommand(opts: ProxyOptions): Promise<void> {
     process.exit(0);
   }
 
-  const proxy = new ProxyServer(policy, parseInt(opts.port, 10));
+  const rateLimitNum = opts.rateLimit ? parseInt(opts.rateLimit, 10) : undefined;
+
+  if (opts.authKey) {
+    process.env.MCP_SEATBELT_API_KEY = opts.authKey;
+  }
+
+  const proxy = new ProxyServer(policy, parseInt(opts.port, 10), {
+    apiKey: opts.authKey,
+    rateLimit: rateLimitNum,
+  });
 
   for (const config of configs) {
     for (const server of config.servers) {

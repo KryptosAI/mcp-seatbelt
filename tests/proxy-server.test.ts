@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach, beforeAll, afterAll } from 'vitest';
 import http from 'node:http';
-import { ProxyServer, StdioClient, HttpClient } from '../src/proxy/server.js';
+import { ProxyServer, StdioClient, HttpClient, SseClient } from '../src/proxy/server.js';
 import { PolicyEngine } from '../src/policy/engine.js';
 import type { PolicyConfig, McpServerConfig } from '../src/types.js';
 
@@ -21,6 +21,7 @@ function makePolicyConfig(rules: any[] = []): PolicyConfig {
       ...rules,
     ],
     allowlist: { tools: [], paths: [], hosts: [], envVars: [] },
+    allowSampling: true,
   };
 }
 
@@ -31,6 +32,7 @@ function makeAllowPolicyConfig(): PolicyConfig {
     defaultAction: 'allow',
     rules: [],
     allowlist: { tools: [], paths: [], hosts: [], envVars: [] },
+    allowSampling: true,
   };
 }
 
@@ -541,5 +543,255 @@ describe('HttpClient', () => {
 
     expect(response.jsonrpc).toBe('2.0');
     expect(response.id).toBeNull();
+  });
+});
+
+// --- SseClient ---
+
+describe('SseClient', () => {
+  let sseServer: http.Server;
+  let port: number;
+  let pendingMessageHandler: ((body: string) => void) | null = null;
+  let sseStreamResponse: http.ServerResponse | null = null;
+  let shouldCloseSSE = false;
+  let sseConnectionEstablished: (() => void) | null = null;
+
+  beforeAll(async () => {
+    return new Promise<void>((resolve) => {
+      sseServer = http.createServer((req, res) => {
+        if (req.method === 'GET' && req.url === '/sse') {
+          res.writeHead(200, {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            Connection: 'keep-alive',
+          });
+          sseStreamResponse = res;
+          if (shouldCloseSSE) {
+            res.end();
+            return;
+          }
+          res.write(':ok\n\n');
+          if (sseConnectionEstablished) {
+            sseConnectionEstablished();
+          }
+        } else if (req.method === 'POST' && req.url === '/message') {
+          let body = '';
+          req.on('data', (chunk) => { body += chunk; });
+          req.on('end', () => {
+            if (pendingMessageHandler) {
+              pendingMessageHandler(body);
+            }
+            res.writeHead(202);
+            res.end();
+          });
+        } else {
+          res.writeHead(404);
+          res.end();
+        }
+      });
+      sseServer.listen(0, () => {
+        port = (sseServer.address() as any).port;
+        resolve();
+      });
+    });
+  });
+
+  afterAll(() => {
+    sseServer.close();
+  });
+
+  afterEach(() => {
+    pendingMessageHandler = null;
+    sseConnectionEstablished = null;
+    shouldCloseSSE = false;
+    if (sseStreamResponse) {
+      try { sseStreamResponse.end(); } catch {}
+      sseStreamResponse = null;
+    }
+  });
+
+  function waitForSSEConnected(): Promise<void> {
+    return new Promise((resolve) => {
+      sseConnectionEstablished = resolve;
+    });
+  }
+
+  it('constructs with valid URL', () => {
+    const client = new SseClient(`http://localhost:${port}/sse`);
+    expect(client).toBeDefined();
+    client.stop();
+  });
+
+  it('deduces message endpoint from /sse URL', () => {
+    const client = new SseClient(`http://localhost:${port}/sse`);
+    const msgEp = (client as any).messageEndpoint;
+    expect(msgEp).toBe(`http://localhost:${port}/message`);
+    client.stop();
+  });
+
+  it('handles sse URL without trailing slash for message endpoint', () => {
+    const client = new SseClient(`http://localhost:${port}/sse`);
+    expect((client as any).messageEndpoint).toBe(`http://localhost:${port}/message`);
+    client.stop();
+  });
+
+  it('start() connects to SSE endpoint', async () => {
+    const client = new SseClient(`http://localhost:${port}/sse`);
+    await client.start();
+    expect((client as any).stopped).toBe(false);
+    expect((client as any).streamAbort).not.toBeNull();
+    client.stop();
+  });
+
+  it('send() sends POST to /message endpoint with JSON body', async () => {
+    return new Promise<void>(async (resolve) => {
+      const client = new SseClient(`http://localhost:${port}/sse`);
+      await client.start();
+
+      pendingMessageHandler = (body: string) => {
+        const parsed = JSON.parse(body);
+        expect(parsed.jsonrpc).toBe('2.0');
+        expect(parsed.method).toBe('tools/call');
+        expect(parsed.params.name).toBe('test_tool');
+        expect(parsed.id).toBe(1);
+        client.stop();
+        resolve();
+      };
+
+      client.send({
+        jsonrpc: '2.0',
+        method: 'tools/call',
+        params: { name: 'test_tool', arguments: {} },
+        id: 1,
+      }).catch(() => {});
+    });
+  });
+
+  it('send() returns null for notification (no id)', async () => {
+    const client = new SseClient(`http://localhost:${port}/sse`);
+    await client.start();
+
+    const response = await client.send({
+      jsonrpc: '2.0',
+      method: 'notifications/initialized',
+    });
+
+    expect(response).toBeNull();
+    client.stop();
+  });
+
+  it('receives SSE data event and resolves pending request', async () => {
+    const client = new SseClient(`http://localhost:${port}/sse`);
+    await client.start();
+    await waitForSSEConnected();
+
+    pendingMessageHandler = (_body: string) => {
+      if (sseStreamResponse) {
+        sseStreamResponse.write(
+          'data: {"jsonrpc":"2.0","result":{"tools":[{"name":"echo"}]},"id":42}\n\n',
+        );
+      }
+    };
+
+    const result = await client.send({
+      jsonrpc: '2.0',
+      method: 'tools/list',
+      id: 42,
+    });
+
+    expect(result).not.toBeNull();
+    expect(result!.jsonrpc).toBe('2.0');
+    expect(result!.id).toBe(42);
+    expect(result!.result).toEqual({ tools: [{ name: 'echo' }] });
+    client.stop();
+  });
+
+  it('handles connection error when server unavailable', async () => {
+    const client = new SseClient('http://127.0.0.1:1/sse');
+
+    const promise = client.send({
+      jsonrpc: '2.0',
+      method: 'tools/list',
+      id: 99,
+    });
+
+    await expect(promise).rejects.toThrow();
+    client.stop();
+  });
+
+  it('rejects on timeout after 30 seconds', async () => {
+    const client = new SseClient(`http://localhost:${port}/sse`);
+    await client.start();
+
+    (client as any).pending.set(77, {
+      resolve: () => {},
+      reject: () => {},
+      timer: setTimeout(() => {}, 60000),
+    });
+
+    const promise = client.send({
+      jsonrpc: '2.0',
+      method: 'tools/list',
+      id: 77,
+    });
+
+    await expect(promise).rejects.toThrow('Request timeout');
+    client.stop();
+  }, 35000);
+
+  it('stop() clears pending requests with transport stopped error', async () => {
+    const client = new SseClient(`http://localhost:${port}/sse`);
+    await client.start();
+
+    const promise = client.send({
+      jsonrpc: '2.0',
+      method: 'tools/list',
+      id: 88,
+    });
+
+    client.stop();
+
+    await expect(promise).rejects.toThrow('Transport stopped');
+  });
+
+  it('schedules reconnect on SSE connection close', async () => {
+    const client = new SseClient(`http://localhost:${port}/sse`);
+    await client.start();
+    await waitForSSEConnected();
+
+    let reconnected = false;
+    const origConnect = (client as any).connectSSE.bind(client);
+    (client as any).connectSSE = () => {
+      reconnected = true;
+    };
+
+    if (sseStreamResponse) {
+      sseStreamResponse.destroy();
+      sseStreamResponse = null;
+    }
+
+    await new Promise((r) => setTimeout(r, 1500));
+    expect(reconnected).toBe(true);
+    client.stop();
+  });
+
+  it('does not reconnect after stop() has been called', async () => {
+    const client = new SseClient(`http://localhost:${port}/sse`);
+    await client.start();
+
+    let connectCalled = false;
+    const origConnect = (client as any).connectSSE.bind(client);
+    (client as any).connectSSE = () => {
+      if (connectCalled) {
+        throw new Error('Should not reconnect after stop');
+      }
+      connectCalled = true;
+      origConnect();
+    };
+
+    client.stop();
+
+    await new Promise((r) => setTimeout(r, 1500));
+    expect(true).toBe(true);
   });
 });

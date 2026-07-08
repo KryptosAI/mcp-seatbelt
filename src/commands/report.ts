@@ -3,10 +3,12 @@ import { dirname } from "node:path";
 import chalk from "chalk";
 import { detectAll } from "../detectors/index.js";
 import { generateMarkdownReport, generateJsonReport } from "../report/generator.js";
+import { generateSarifReport } from "../report/sarif.js";
 
 export interface ReportOptions {
   output: string;
   json: boolean;
+  sarif?: boolean;
 }
 
 export async function reportCommand(opts: ReportOptions): Promise<void> {
@@ -21,7 +23,12 @@ export async function reportCommand(opts: ReportOptions): Promise<void> {
 
   mkdirSync(dirname(opts.output), { recursive: true });
 
-  if (opts.json) {
+  if (opts.sarif) {
+    const sarifOutput = opts.output.replace(/\.[^.]+$/, ".sarif.json");
+    const report = generateSarifReport(configs);
+    writeFileSync(sarifOutput, JSON.stringify(report, null, 2), "utf-8");
+    console.log(chalk.green(`✓ SARIF report written to ${sarifOutput}`));
+  } else if (opts.json) {
     const report = generateJsonReport(configs);
     writeFileSync(opts.output, JSON.stringify(report, null, 2), "utf-8");
     console.log(chalk.green(`✓ JSON report written to ${opts.output}`));

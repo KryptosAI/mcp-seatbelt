@@ -2,7 +2,7 @@ import type { PolicyConfig, PolicyRule } from '../types.js';
 
 const VALID_TARGETS = ['command', 'file', 'network', 'env', 'process'] as const;
 const VALID_MATCHES = ['exact', 'pattern', 'contains'] as const;
-const VALID_ACTIONS = ['allow', 'deny', 'warn'] as const;
+const VALID_ACTIONS = ['allow', 'deny', 'warn', 'redact'] as const;
 const VALID_MODES = ['audit', 'enforce'] as const;
 
 export function validatePolicy(config: unknown): PolicyConfig {
@@ -77,6 +77,7 @@ export function validatePolicy(config: unknown): PolicyConfig {
       hosts: allowlist.hosts as string[],
       envVars: allowlist.envVars as string[],
     },
+    allowSampling: typeof obj.allowSampling === 'boolean' ? obj.allowSampling : true,
   };
 }
 
@@ -118,5 +119,55 @@ function validateRule(rule: unknown, index: number): asserts rule is PolicyRule 
     throw new Error(
       `Policy rule[${index}].action must be one of ${VALID_ACTIONS.join(', ')}, got ${JSON.stringify(r.action)}`,
     );
+  }
+
+  if (r.timeWindow !== undefined && r.timeWindow !== null) {
+    const tw = r.timeWindow as Record<string, unknown>;
+
+    if (tw.days !== undefined) {
+      if (!Array.isArray(tw.days)) {
+        throw new Error(`Policy rule[${index}].timeWindow.days must be an array`);
+      }
+      const validDays = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+      const lowerValid = validDays.map((d) => d.toLowerCase());
+      for (const day of tw.days) {
+        if (typeof day !== 'string' || !lowerValid.includes(day.toLowerCase())) {
+          throw new Error(
+            `Policy rule[${index}].timeWindow.days must contain valid day names, got ${JSON.stringify(day)}`,
+          );
+        }
+      }
+    }
+
+    if (tw.startHour !== undefined) {
+      if (typeof tw.startHour !== 'number' || tw.startHour < 0 || tw.startHour > 23 || !Number.isInteger(tw.startHour)) {
+        throw new Error(`Policy rule[${index}].timeWindow.startHour must be an integer 0-23`);
+      }
+    }
+
+    if (tw.endHour !== undefined) {
+      if (typeof tw.endHour !== 'number' || tw.endHour < 0 || tw.endHour > 23 || !Number.isInteger(tw.endHour)) {
+        throw new Error(`Policy rule[${index}].timeWindow.endHour must be an integer 0-23`);
+      }
+    }
+  }
+
+  if (r.contextCondition !== undefined && r.contextCondition !== null) {
+    const cc = r.contextCondition as Record<string, unknown>;
+
+    if (cc.clientIn !== undefined) {
+      if (!Array.isArray(cc.clientIn)) {
+        throw new Error(`Policy rule[${index}].contextCondition.clientIn must be an array`);
+      }
+      if (!cc.clientIn.every((v: unknown) => typeof v === 'string')) {
+        throw new Error(`Policy rule[${index}].contextCondition.clientIn must contain only strings`);
+      }
+    }
+
+    if (cc.maxRequestsPerMinute !== undefined) {
+      if (typeof cc.maxRequestsPerMinute !== 'number' || cc.maxRequestsPerMinute <= 0 || !Number.isInteger(cc.maxRequestsPerMinute)) {
+        throw new Error(`Policy rule[${index}].contextCondition.maxRequestsPerMinute must be a positive integer`);
+      }
+    }
   }
 }

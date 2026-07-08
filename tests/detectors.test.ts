@@ -14,7 +14,7 @@ vi.mock('node:os', async (importOriginal) => {
 });
 
 import { homedir } from 'node:os';
-import { detectAll } from '../src/detectors/index.js';
+import { detectAll, detectByClient } from '../src/detectors/index.js';
 import { assessRisk } from '../src/detectors/risk.js';
 import type { McpServerConfig } from '../src/types.js';
 
@@ -354,5 +354,116 @@ describe('assessRisk', () => {
     expect(ruleNames).toContain('privilege-escalation');
     expect(ruleNames).toContain('network-transport');
     expect(ruleNames).toContain('sensitive-env');
+  });
+});
+
+describe('detectByClient', () => {
+  let tempDir: string;
+
+  beforeEach(() => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-seatbelt-test-'));
+    vi.mocked(homedir).mockReturnValue(tempDir);
+    vi.spyOn(process, 'cwd').mockReturnValue(tempDir);
+  });
+
+  afterEach(() => {
+    if (tempDir && fs.existsSync(tempDir)) {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('detectByClient("cursor") returns cursor configs', async () => {
+    writeJson(path.join(tempDir, '.cursor', 'mcp.json'), {
+      mcpServers: {
+        'cursor-server': { command: 'my-cursor-mcp', args: ['server.js'] },
+      },
+    });
+
+    const results = await detectByClient('cursor');
+    expect(results).toHaveLength(1);
+    expect(results[0].client).toBe('cursor');
+    expect(results[0].servers[0].name).toBe('cursor-server');
+  });
+
+  it('detectByClient("unknown") returns empty array', async () => {
+    writeJson(path.join(tempDir, '.cursor', 'mcp.json'), {
+      mcpServers: {
+        'test-server': { command: 'echo', args: ['hi'] },
+      },
+    });
+
+    const results = await detectByClient('nonexistent-client');
+    expect(results).toHaveLength(0);
+  });
+
+  it('detectByClient("claude-desktop") works', async () => {
+    writeJson(
+      path.join(tempDir, 'Library', 'Application Support', 'Claude', 'claude_desktop_config.json'),
+      {
+        mcpServers: {
+          'claude-srv': { command: 'my-claude-app', args: ['srv.js'] },
+        },
+      },
+    );
+
+    const results = await detectByClient('claude-desktop');
+    expect(results).toHaveLength(1);
+    expect(results[0].client).toBe('claude-desktop');
+  });
+
+  it('detectByClient("windsurf") works', async () => {
+    writeJson(path.join(tempDir, '.codeium', 'windsurf', 'mcp.json'), {
+      mcpServers: {
+        'wind-srv': { command: 'my-wind-mcp', args: ['srv.js'] },
+      },
+    });
+
+    const results = await detectByClient('windsurf');
+    expect(results).toHaveLength(1);
+    expect(results[0].client).toBe('windsurf');
+  });
+
+  it('detectByClient("project") works', async () => {
+    writeJson(path.join(tempDir, 'mcp.json'), {
+      mcpServers: {
+        'proj-srv': { command: 'my-proj-mcp', args: ['srv.js'] },
+      },
+    });
+
+    const results = await detectByClient('project');
+    expect(results).toHaveLength(1);
+    expect(results[0].client).toBe('project');
+  });
+
+  it('detectByClient("vscode") works', async () => {
+    writeJson(path.join(tempDir, '.vscode', 'mcp.json'), {
+      mcpServers: {
+        'vs-srv': { command: 'my-vs-mcp', args: ['srv.js'] },
+      },
+    });
+
+    const results = await detectByClient('vscode');
+    expect(results).toHaveLength(1);
+    expect(results[0].client).toBe('vscode');
+  });
+
+  it('detectByClient filters correctly when multiple clients exist', async () => {
+    writeJson(path.join(tempDir, '.cursor', 'mcp.json'), {
+      mcpServers: { 'c-srv': { command: 'my-cursor-app', args: ['app.py'] } },
+    });
+    writeJson(
+      path.join(tempDir, 'Library', 'Application Support', 'Claude', 'claude_desktop_config.json'),
+      {
+        mcpServers: { 'cl-srv': { command: 'my-claude-app', args: ['srv.js'] } },
+      },
+    );
+
+    const cursorResults = await detectByClient('cursor');
+    expect(cursorResults).toHaveLength(1);
+    expect(cursorResults[0].client).toBe('cursor');
+
+    const claudeResults = await detectByClient('claude-desktop');
+    expect(claudeResults).toHaveLength(1);
+    expect(claudeResults[0].client).toBe('claude-desktop');
   });
 });

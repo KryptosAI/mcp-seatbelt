@@ -20,12 +20,17 @@ export interface RegisteredServer {
   risk: string;
 }
 
+export interface ProxyServerOptions {
+  apiKey?: string;
+  rateLimit?: number;
+}
+
 interface ServerRegistration {
   name: string;
   command: string;
   args: string[];
   env?: Record<string, string>;
-  transport: 'stdio' | 'http' | 'sse';
+  transport: 'stdio' | 'http' | 'sse' | 'streamable-http';
   url?: string;
 }
 
@@ -35,6 +40,17 @@ interface PendingRequest {
   timer: NodeJS.Timeout;
 }
 
+interface CircuitBreakerState {
+  failures: number;
+  openUntil: number;
+  halfOpen: boolean;
+}
+
+interface RateLimitEntry {
+  count: number;
+  resetTime: number;
+}
+
 export class StdioClient {
   private child: ChildProcess | null = null;
   private pending: Map<number | string, PendingRequest> = new Map();
@@ -42,6 +58,7 @@ export class StdioClient {
   private args: string[];
   private env: Record<string, string>;
   private stopped = false;
+  onNotification: ((notification: MCPResponse) => void) | null = null;
 
   constructor(command: string, args: string[], env?: Record<string, string>) {
     this.command = command;
@@ -79,6 +96,8 @@ export class StdioClient {
             this.pending.delete(id);
             pending.resolve(response);
           }
+        } else {
+          this.onNotification?.(response);
         }
       } catch {
         // ignore unparseable lines (stderr noise, etc.)
@@ -108,6 +127,8 @@ export class StdioClient {
               pending.resolve(response);
               handled = true;
             }
+          } else {
+            this.onNotification?.(response);
           }
         } catch {
           // not JSON-RPC
@@ -229,6 +250,7 @@ export class SseClient {
   private stopped = false;
   private reconnectTimer: NodeJS.Timeout | null = null;
   private messageEndpoint: string;
+  onNotification: ((notification: MCPResponse) => void) | null = null;
 
   constructor(url: string) {
     this.url = url;
@@ -305,6 +327,8 @@ export class SseClient {
           this.pending.delete(id);
           pending.resolve(response);
         }
+      } else {
+        this.onNotification?.(response);
       }
     } catch {
       // ignore unparseable SSE data
@@ -366,7 +390,72 @@ export class SseClient {
   }
 }
 
-type McpClient = StdioClient | HttpClient | SseClient;
+export class StreamableHttpClient {
+  private url: string;
+  private stopped = false;
+
+  constructor(url: string) {
+    this.url = url;
+  }
+
+  async start(): Promise<void> {
+    this.stopped = false;
+  }
+
+  stop(): void {
+    this.stopped = true;
+  }
+
+  async send(request: MCPRequest): Promise<MCPResponse> {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 30000);
+
+    try {
+      const response = await fetch(this.url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json, text/event-stream',
+        },
+        body: JSON.stringify(request),
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      const contentType = response.headers.get('content-type') || '';
+      if (contentType.includes('text/event-stream')) {
+        const text = await response.text();
+        const lines = text.split('\n');
+        let data = '';
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            data += line.slice(6);
+          }
+        }
+        if (data) {
+          return JSON.parse(data) as MCPResponse;
+        }
+        throw new Error('Empty SSE stream response from streamable-http endpoint');
+      }
+
+      return response.json() as Promise<MCPResponse>;
+    } catch (error) {
+      clearTimeout(timeoutId);
+
+      if (error instanceof Error && error.name === 'AbortError') {
+        throw new Error(`Request timeout: ${request.method}`);
+      }
+      throw error;
+    }
+  }
+}
+
+type McpClient = StdioClient | HttpClient | SseClient | StreamableHttpClient;
 
 export class ProxyServer {
   private policy: PolicyEngine;
@@ -379,22 +468,38 @@ export class ProxyServer {
   private stats: ProxyStats;
   private startTime: Date = new Date();
 
-  constructor(policy: PolicyEngine, port: number = 9420) {
+  private apiKey: string | null;
+  private rateLimitMax: number;
+  private rateLimitWindow: number = 60000;
+  private rateLimits: Map<string, RateLimitEntry> = new Map();
+  private circuits: Map<string, CircuitBreakerState> = new Map();
+  private readonly CIRCUIT_THRESHOLD = 5;
+  private readonly CIRCUIT_TIMEOUT = 30000;
+
+  private toolDescriptions: Map<string, string> = new Map();
+
+  constructor(policy: PolicyEngine, port: number = 9420, options?: ProxyServerOptions) {
     this.policy = policy;
     this.port = port;
+    this.apiKey = options?.apiKey ?? null;
+    this.rateLimitMax = options?.rateLimit ?? 100;
+
     this.app = express();
-    this.app.use(express.json());
+    this.app.use(express.json({ limit: '5mb' }));
 
     this.stats = {
       totalRequests: 0,
       blocked: 0,
       allowed: 0,
       warned: 0,
+      redacted: 0,
       startTime: '',
       uptime: 0,
     };
 
     this.setupRoutes();
+
+    setInterval(() => this.cleanupRateLimits(), 60000);
   }
 
   register(server: McpServerConfig, _client: string): void {
@@ -432,6 +537,8 @@ export class ProxyServer {
       if (reg.transport === 'sse' && reg.url) {
         client = new SseClient(reg.url);
         await (client as SseClient).start();
+      } else if (reg.transport === 'streamable-http' && reg.url) {
+        client = new StreamableHttpClient(reg.url);
       } else if (reg.transport === 'http' && reg.url) {
         client = new HttpClient(reg.url);
       } else {
@@ -439,6 +546,16 @@ export class ProxyServer {
         await (client as StdioClient).start();
       }
       this.clients.set(name, client);
+
+      if (client instanceof StdioClient || client instanceof SseClient) {
+        client.onNotification = (notification: MCPResponse) => {
+          if (notification.method === 'notifications/tools/list_changed') {
+            this.cacheToolDescriptions(name, client).catch(() => {});
+          }
+        };
+      }
+
+      await this.cacheToolDescriptions(name, client);
     }
 
     return new Promise((resolve) => {
@@ -446,6 +563,31 @@ export class ProxyServer {
         resolve();
       });
     });
+  }
+
+  private async cacheToolDescriptions(serverName: string, client: McpClient): Promise<void> {
+    try {
+      const resp = await client.send({
+        jsonrpc: '2.0',
+        method: 'tools/list',
+        id: `cache-desc-${serverName}`,
+      });
+      if (resp?.result && typeof resp.result === 'object') {
+        const result = resp.result as Record<string, unknown>;
+        if (Array.isArray(result.tools)) {
+          for (const tool of result.tools) {
+            if (tool && typeof tool === 'object') {
+              const t = tool as Record<string, unknown>;
+              if (typeof t.name === 'string') {
+                this.toolDescriptions.set(t.name, typeof t.description === 'string' ? t.description : '');
+              }
+            }
+          }
+        }
+      }
+    } catch {
+      // ignore caching errors, tool descriptions will default to empty string
+    }
   }
 
   async stop(): Promise<void> {
@@ -482,12 +624,102 @@ export class ProxyServer {
     };
   }
 
+  private checkCircuit(serverName: string): 'open' | 'half-open' | 'closed' {
+    const circuit = this.circuits.get(serverName);
+    if (!circuit) return 'closed';
+
+    const now = Date.now();
+    if (circuit.openUntil > now) {
+      return 'open';
+    }
+
+    if (circuit.failures >= this.CIRCUIT_THRESHOLD && circuit.openUntil <= now && !circuit.halfOpen) {
+      circuit.halfOpen = true;
+      return 'half-open';
+    }
+
+    return 'closed';
+  }
+
+  private recordSuccess(serverName: string): void {
+    const circuit = this.circuits.get(serverName);
+    if (circuit) {
+      this.circuits.delete(serverName);
+    }
+  }
+
+  private recordFailure(serverName: string): void {
+    let circuit = this.circuits.get(serverName);
+    if (!circuit) {
+      circuit = { failures: 0, openUntil: 0, halfOpen: false };
+      this.circuits.set(serverName, circuit);
+    }
+    circuit.failures++;
+    if (circuit.failures >= this.CIRCUIT_THRESHOLD) {
+      circuit.openUntil = Date.now() + this.CIRCUIT_TIMEOUT;
+    }
+  }
+
+  private cleanupRateLimits(): void {
+    const now = Date.now();
+    for (const [ip, entry] of this.rateLimits) {
+      if (now >= entry.resetTime) {
+        this.rateLimits.delete(ip);
+      }
+    }
+  }
+
+  private checkRateLimit(ip: string): boolean {
+    const now = Date.now();
+    const entry = this.rateLimits.get(ip);
+
+    if (!entry || now >= entry.resetTime) {
+      this.rateLimits.set(ip, { count: 1, resetTime: now + this.rateLimitWindow });
+      return true;
+    }
+
+    if (entry.count >= this.rateLimitMax) {
+      return false;
+    }
+
+    entry.count++;
+    return true;
+  }
+
   private setupRoutes(): void {
     this.app.get('/health', (_req: Request, res: Response) => {
       res.json({ status: 'ok', stats: this.getStats() });
     });
 
     this.app.post('/:serverName', async (req: Request, res: Response) => {
+      if (this.apiKey) {
+        const authHeader = req.headers['authorization'];
+        if (!authHeader || !authHeader.startsWith('Bearer ') || authHeader.slice(7) !== this.apiKey) {
+          res.status(401).json({
+            jsonrpc: '2.0',
+            error: {
+              code: -32003,
+              message: 'Unauthorized: invalid or missing API key',
+            },
+            id: null,
+          });
+          return;
+        }
+      }
+
+      const clientIp = req.ip || req.socket.remoteAddress || 'unknown';
+      if (!this.checkRateLimit(clientIp)) {
+        res.status(429).json({
+          jsonrpc: '2.0',
+          error: {
+            code: -32004,
+            message: 'Rate limit exceeded',
+          },
+          id: null,
+        });
+        return;
+      }
+
       const { serverName } = req.params;
       const mcpRequest = req.body as MCPRequest;
 
@@ -517,29 +749,39 @@ export class ProxyServer {
         return;
       }
 
+      const circuitState = this.checkCircuit(serverName);
+      if (circuitState === 'open') {
+        res.status(503).json({
+          jsonrpc: '2.0',
+          error: {
+            code: -32002,
+            message: `Circuit open for server "${serverName}". Service temporarily unavailable.`,
+          },
+          id: mcpRequest.id ?? null,
+        });
+        return;
+      }
+
+      const toolDescription = mcpRequest.method === 'tools/call' && mcpRequest.params?.name
+        ? this.toolDescriptions.get(mcpRequest.params.name) || ''
+        : '';
+
+      const ctx = {
+        client: serverName,
+        requestCount: this.stats.totalRequests,
+      };
+
       const blockedResponse = interceptRequest(
         mcpRequest,
         this.policy,
         serverName,
+        undefined,
+        toolDescription,
       );
       if (blockedResponse) {
         this.stats.blocked++;
         res.json(blockedResponse);
         return;
-      }
-
-      if (
-        mcpRequest.method === 'tools/call' &&
-        mcpRequest.params?.name
-      ) {
-        const evalResult = this.policy.evaluate(
-          mcpRequest.params.name,
-          '',
-          mcpRequest.params.arguments ?? {},
-        );
-        if (evalResult.action === 'warn') {
-          this.stats.warned++;
-        }
       }
 
       const client = this.clients.get(serverName);
@@ -557,6 +799,8 @@ export class ProxyServer {
 
       try {
         const upstreamResponse = await client.send(mcpRequest);
+
+        this.recordSuccess(serverName);
 
         if (upstreamResponse === null) {
           this.stats.allowed++;
@@ -589,10 +833,25 @@ export class ProxyServer {
           this.stats.allowed++;
           res.json(filtered);
         } else {
+          if (mcpRequest.method === 'tools/call' && mcpRequest.params?.name) {
+            const description = this.toolDescriptions.get(mcpRequest.params.name) || '';
+            const evalResult = this.policy.evaluate(
+              mcpRequest.params.name,
+              description,
+              mcpRequest.params.arguments ?? {},
+            );
+            if (evalResult.action === 'warn') {
+              this.stats.warned++;
+            }
+            if (evalResult.action === 'redact') {
+              this.stats.redacted++;
+            }
+          }
           this.stats.allowed++;
           res.json(upstreamResponse);
         }
       } catch (error) {
+        this.recordFailure(serverName);
         res.status(502).json({
           jsonrpc: '2.0',
           error: {

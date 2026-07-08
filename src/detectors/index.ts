@@ -8,6 +8,7 @@ import { detectClaudeDesktop } from "./claude-desktop.js";
 import { detectChatGPTDesktop } from "./chatgpt-desktop.js";
 import { detectVSCode } from "./vscode.js";
 import { detectCodex } from "./codex.js";
+import { detectJetBrains } from "./jetbrains.js";
 
 export function parseMcpServers(raw: Record<string, unknown>): McpServerConfig[] {
   const mcpServers = raw.mcpServers as Record<string, Record<string, unknown>> | undefined;
@@ -35,6 +36,7 @@ export async function detectAll(): Promise<McpClientConfig[]> {
     detectChatGPTDesktop(),
     detectVSCode(),
     detectCodex(),
+    detectJetBrains(),
   ]);
 
   for (const result of detectorResults) {

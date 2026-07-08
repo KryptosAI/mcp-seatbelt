@@ -3,6 +3,8 @@ import { PolicyEngine } from '../src/policy/engine.js';
 import {
   interceptRequest,
   filterToolsListResponse,
+  filterResourcesListResponse,
+  filterPromptsListResponse,
 } from '../src/proxy/intercept.js';
 import type { MCPRequest, MCPResponse } from '../src/proxy/intercept.js';
 import type { PolicyConfig, PolicyRule } from '../src/types.js';
@@ -14,6 +16,7 @@ function makeEnforceConfig(rules: PolicyRule[] = []): PolicyConfig {
     defaultAction: 'deny',
     rules,
     allowlist: { tools: [], paths: [], hosts: [], envVars: [] },
+    allowSampling: true,
   };
 }
 
@@ -206,6 +209,7 @@ describe('interceptRequest warn path', () => {
       defaultAction: 'allow',
       rules: [],
       allowlist: { tools: [], paths: [], hosts: [], envVars: [] },
+      allowSampling: true,
     });
     const request: MCPRequest = {
       jsonrpc: '2.0',
@@ -228,6 +232,7 @@ describe('interceptRequest warn path', () => {
       defaultAction: 'deny',
       rules: [denyEvalRule],
       allowlist: { tools: [], paths: [], hosts: [], envVars: [] },
+      allowSampling: true,
     });
     const request: MCPRequest = {
       jsonrpc: '2.0',
@@ -485,5 +490,532 @@ describe('MCPRequest / MCPResponse type alignment', () => {
     expect(response.error?.code).toBe(-32001);
     expect(response.error?.message).toContain('Blocked');
     expect(response.id).toBeNull();
+  });
+});
+
+describe('filterResourcesListResponse', () => {
+  const denySecretRule: PolicyRule = {
+    id: 'block-secret',
+    description: 'Block secret resources',
+    target: 'command',
+    match: 'contains',
+    values: ['secret'],
+    action: 'deny',
+  };
+
+  it('passes through all resources when no policy rules match', () => {
+    const policy = new PolicyEngine(makeAllowConfig([]));
+
+    const response: MCPResponse = {
+      jsonrpc: '2.0',
+      result: {
+        resources: [
+          { name: 'public-doc', uri: 'file:///docs/public.md' },
+          { name: 'readme', uri: 'file:///docs/readme.md' },
+        ],
+      },
+      id: 1,
+    };
+
+    const filtered = filterResourcesListResponse(response, policy, 'test-server');
+    const resources = (filtered.result as Record<string, unknown>).resources as Array<Record<string, unknown>>;
+    expect(resources).toHaveLength(2);
+    expect(resources.map((r) => r.name)).toEqual(['public-doc', 'readme']);
+  });
+
+  it('removes denied resources from the list', () => {
+    const policy = new PolicyEngine(makeAllowConfig([denySecretRule]));
+
+    const response: MCPResponse = {
+      jsonrpc: '2.0',
+      result: {
+        resources: [
+          { name: 'public-doc', uri: 'file:///docs/public.md' },
+          { name: 'secret-keys', uri: 'file:///etc/secrets.env' },
+          { name: 'readme', uri: 'file:///docs/readme.md' },
+        ],
+      },
+      id: 2,
+    };
+
+    const filtered = filterResourcesListResponse(response, policy, 'test-server');
+    const resources = (filtered.result as Record<string, unknown>).resources as Array<Record<string, unknown>>;
+    expect(resources).toHaveLength(2);
+    expect(resources.map((r) => r.name)).toEqual(['public-doc', 'readme']);
+  });
+
+  it('returns empty array when all resources are denied', () => {
+    const policy = new PolicyEngine(makeEnforceConfig([denySecretRule]));
+
+    const response: MCPResponse = {
+      jsonrpc: '2.0',
+      result: {
+        resources: [
+          { name: 'secret-1', uri: 'file:///secrets/a.env' },
+          { name: 'top-secret', uri: 'file:///secrets/b.env' },
+        ],
+      },
+      id: 3,
+    };
+
+    const filtered = filterResourcesListResponse(response, policy, 'test-server');
+    const resources = (filtered.result as Record<string, unknown>).resources as Array<Record<string, unknown>>;
+    expect(resources).toHaveLength(0);
+  });
+
+  it('preserves id and jsonrpc structure in filtered response', () => {
+    const policy = new PolicyEngine(makeAllowConfig([denySecretRule]));
+
+    const response: MCPResponse = {
+      jsonrpc: '2.0',
+      result: {
+        resources: [
+          { name: 'public', uri: 'file:///docs/public.md' },
+          { name: 'secret', uri: 'file:///secrets/keys.env' },
+        ],
+        nextCursor: 'page2',
+      },
+      id: 100,
+    };
+
+    const filtered = filterResourcesListResponse(response, policy, 'test-server');
+    expect(filtered.jsonrpc).toBe('2.0');
+    expect(filtered.id).toBe(100);
+    const result = filtered.result as Record<string, unknown>;
+    expect(result.nextCursor).toBe('page2');
+    const resources = result.resources as Array<Record<string, unknown>>;
+    expect(resources).toHaveLength(1);
+    expect(resources[0].name).toBe('public');
+  });
+
+  it('passes through response with non-object result unchanged', () => {
+    const policy = new PolicyEngine(makeEnforceConfig([denySecretRule]));
+    const response: MCPResponse = {
+      jsonrpc: '2.0',
+      result: 'string result',
+      id: 1,
+    };
+
+    const filtered = filterResourcesListResponse(response, policy, 'test-server');
+    expect(filtered).toBe(response);
+  });
+
+  it('passes through response with non-array resources unchanged', () => {
+    const policy = new PolicyEngine(makeEnforceConfig([denySecretRule]));
+    const response: MCPResponse = {
+      jsonrpc: '2.0',
+      result: { resources: 'not-an-array' },
+      id: 1,
+    };
+
+    const filtered = filterResourcesListResponse(response, policy, 'test-server');
+    expect(filtered).toBe(response);
+  });
+
+  it('matches resources by uri when name is absent', () => {
+    const policy = new PolicyEngine(makeAllowConfig([denySecretRule]));
+    const response: MCPResponse = {
+      jsonrpc: '2.0',
+      result: {
+        resources: [
+          { uri: 'file:///secret/file.txt' },
+          { uri: 'file:///public/file.txt' },
+        ],
+      },
+      id: 99,
+    };
+
+    const filtered = filterResourcesListResponse(response, policy, 'test-server');
+    const resources = (filtered.result as Record<string, unknown>).resources as Array<Record<string, unknown>>;
+    expect(resources).toHaveLength(1);
+    expect(resources[0].uri).toBe('file:///public/file.txt');
+  });
+});
+
+describe('resources/read interception', () => {
+  const fileRule: PolicyRule = {
+    id: 'block-etc-read',
+    description: 'Block reading /etc paths',
+    target: 'file',
+    match: 'contains',
+    values: ['/etc'],
+    action: 'deny',
+  };
+
+  it('blocks resources/read with denied URI', () => {
+    const policy = new PolicyEngine(makeEnforceConfig([fileRule]));
+    const request: MCPRequest = {
+      jsonrpc: '2.0',
+      method: 'resources/read',
+      params: { uri: 'file:///etc/hosts' },
+      id: 10,
+    };
+
+    const result = interceptRequest(request, policy, 'test-server');
+    expect(result).not.toBeNull();
+    expect(result!.error!.code).toBe(-32001);
+    expect(result!.error!.message).toContain('block-etc-read');
+  });
+
+  it('allows resources/read with allowed URI', () => {
+    const policy = new PolicyEngine(makeAllowConfig([fileRule]));
+    const request: MCPRequest = {
+      jsonrpc: '2.0',
+      method: 'resources/read',
+      params: { uri: 'file:///tmp/safe.txt' },
+      id: 11,
+    };
+
+    const result = interceptRequest(request, policy, 'test-server');
+    expect(result).toBeNull();
+  });
+
+  it('returns error for resources/read with missing URI', () => {
+    const policy = new PolicyEngine(makeEnforceConfig([]));
+    const request: MCPRequest = {
+      jsonrpc: '2.0',
+      method: 'resources/read',
+      params: {},
+      id: 12,
+    };
+
+    const result = interceptRequest(request, policy, 'test-server');
+    expect(result).not.toBeNull();
+    expect(result!.error!.code).toBe(-32602);
+    expect(result!.error!.message).toContain('missing resource URI');
+  });
+});
+
+describe('resources/subscribe interception', () => {
+  const secretRule: PolicyRule = {
+    id: 'block-secret-subscribe',
+    description: 'Block subscribe to secret paths',
+    target: 'file',
+    match: 'contains',
+    values: ['secret'],
+    action: 'deny',
+  };
+
+  it('blocks resources/subscribe with denied URI', () => {
+    const policy = new PolicyEngine(makeEnforceConfig([secretRule]));
+    const request: MCPRequest = {
+      jsonrpc: '2.0',
+      method: 'resources/subscribe',
+      params: { uri: 'file:///secret/data' },
+      id: 20,
+    };
+
+    const result = interceptRequest(request, policy, 'test-server');
+    expect(result).not.toBeNull();
+    expect(result!.error!.code).toBe(-32001);
+    expect(result!.error!.message).toContain('block-secret-subscribe');
+  });
+});
+
+describe('prompts/get interception', () => {
+  const blockPromptRule: PolicyRule = {
+    id: 'block-danger-prompt',
+    description: 'Block dangerous prompts',
+    target: 'command',
+    match: 'contains',
+    values: ['dangerous'],
+    action: 'deny',
+  };
+
+  it('blocks prompts/get with denied prompt name', () => {
+    const policy = new PolicyEngine(makeEnforceConfig([blockPromptRule]));
+    const request: MCPRequest = {
+      jsonrpc: '2.0',
+      method: 'prompts/get',
+      params: { name: 'dangerous_prompt' },
+      id: 30,
+    };
+
+    const result = interceptRequest(request, policy, 'test-server');
+    expect(result).not.toBeNull();
+    expect(result!.error!.code).toBe(-32001);
+    expect(result!.error!.message).toContain('block-danger-prompt');
+  });
+
+  it('allows prompts/get with safe prompt name', () => {
+    const policy = new PolicyEngine(makeAllowConfig([blockPromptRule]));
+    const request: MCPRequest = {
+      jsonrpc: '2.0',
+      method: 'prompts/get',
+      params: { name: 'safe_prompt' },
+      id: 31,
+    };
+
+    const result = interceptRequest(request, policy, 'test-server');
+    expect(result).toBeNull();
+  });
+});
+
+describe('sampling/createMessage interception', () => {
+  it('blocks sampling/createMessage when allowSampling is false', () => {
+    const config: PolicyConfig = {
+      ...makeEnforceConfig([]),
+      allowSampling: false,
+    };
+    const policy = new PolicyEngine(config);
+    const request: MCPRequest = {
+      jsonrpc: '2.0',
+      method: 'sampling/createMessage',
+      params: { messages: [], maxTokens: 100 },
+      id: 40,
+    };
+
+    const result = interceptRequest(request, policy, 'test-server');
+    expect(result).not.toBeNull();
+    expect(result!.error!.code).toBe(-32001);
+    expect(result!.error!.message).toContain('sampling/createMessage disabled');
+  });
+
+  it('allows sampling/createMessage passthrough when allowSampling is true', () => {
+    const config: PolicyConfig = {
+      ...makeEnforceConfig([]),
+      allowSampling: true,
+    };
+    const policy = new PolicyEngine(config);
+    const request: MCPRequest = {
+      jsonrpc: '2.0',
+      method: 'sampling/createMessage',
+      params: { messages: [], maxTokens: 100 },
+      id: 41,
+    };
+
+    const result = interceptRequest(request, policy, 'test-server');
+    expect(result).toBeNull();
+  });
+});
+
+describe('notifications filtering', () => {
+  it('passes through notifications/tools/list_changed and logs', () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const policy = new PolicyEngine(makeEnforceConfig([]));
+    const request: MCPRequest = {
+      jsonrpc: '2.0',
+      method: 'notifications/tools/list_changed',
+    };
+
+    const result = interceptRequest(request, policy, 'test-server');
+    expect(result).toBeNull();
+    expect(logSpy).toHaveBeenCalledWith(
+      expect.stringContaining('tools/list changed'),
+    );
+    logSpy.mockRestore();
+  });
+
+  it('passes through notifications/resources/updated and logs', () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const policy = new PolicyEngine(makeEnforceConfig([]));
+    const request: MCPRequest = {
+      jsonrpc: '2.0',
+      method: 'notifications/resources/updated',
+    };
+
+    const result = interceptRequest(request, policy, 'test-server');
+    expect(result).toBeNull();
+    expect(logSpy).toHaveBeenCalledWith(
+      expect.stringContaining('resources/updated'),
+    );
+    logSpy.mockRestore();
+  });
+
+  it('passes through notifications/prompts/list_changed and logs', () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const policy = new PolicyEngine(makeEnforceConfig([]));
+    const request: MCPRequest = {
+      jsonrpc: '2.0',
+      method: 'notifications/prompts/list_changed',
+    };
+
+    const result = interceptRequest(request, policy, 'test-server');
+    expect(result).toBeNull();
+    expect(logSpy).toHaveBeenCalledWith(
+      expect.stringContaining('prompts/list changed'),
+    );
+    logSpy.mockRestore();
+  });
+
+  it('blocks notifications/sampling/createMessage with user data', () => {
+    const policy = new PolicyEngine(makeEnforceConfig([]));
+    const request: MCPRequest = {
+      jsonrpc: '2.0',
+      method: 'notifications/sampling/createMessage',
+      params: { messages: ['some user data'], maxTokens: 100 },
+    };
+
+    const result = interceptRequest(request, policy, 'test-server');
+    expect(result).not.toBeNull();
+    expect(result!.error!.code).toBe(-32001);
+    expect(result!.error!.message).toContain('exfiltration risk');
+  });
+
+  it('passes through unknown notification types', () => {
+    const policy = new PolicyEngine(makeEnforceConfig([]));
+    const request: MCPRequest = {
+      jsonrpc: '2.0',
+      method: 'notifications/initialized',
+    };
+
+    const result = interceptRequest(request, policy, 'test-server');
+    expect(result).toBeNull();
+  });
+});
+
+describe('completion/complete interception', () => {
+  it('passes through completion/complete and logs', () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const policy = new PolicyEngine(makeEnforceConfig([]));
+    const request: MCPRequest = {
+      jsonrpc: '2.0',
+      method: 'completion/complete',
+      params: { ref: { type: 'ref/prompt', name: 'test' } },
+      id: 50,
+    };
+
+    const result = interceptRequest(request, policy, 'test-server');
+    expect(result).toBeNull();
+    expect(logSpy).toHaveBeenCalledWith(
+      expect.stringContaining('completion/complete'),
+    );
+    logSpy.mockRestore();
+  });
+});
+
+describe('filterPromptsListResponse', () => {
+  const denyDangerousRule: PolicyRule = {
+    id: 'block-danger',
+    description: 'Block dangerous prompts',
+    target: 'command',
+    match: 'contains',
+    values: ['dangerous'],
+    action: 'deny',
+  };
+
+  it('passes through all prompts when no policy rules match', () => {
+    const policy = new PolicyEngine(makeAllowConfig([]));
+
+    const response: MCPResponse = {
+      jsonrpc: '2.0',
+      result: {
+        prompts: [
+          { name: 'greeting', description: 'A friendly greeting' },
+          { name: 'farewell', description: 'A polite goodbye' },
+        ],
+      },
+      id: 1,
+    };
+
+    const filtered = filterPromptsListResponse(response, policy, 'test-server');
+    const prompts = (filtered.result as Record<string, unknown>).prompts as Array<Record<string, unknown>>;
+    expect(prompts).toHaveLength(2);
+    expect(prompts.map((p) => p.name)).toEqual(['greeting', 'farewell']);
+  });
+
+  it('removes denied prompts from the list', () => {
+    const policy = new PolicyEngine(makeAllowConfig([denyDangerousRule]));
+
+    const response: MCPResponse = {
+      jsonrpc: '2.0',
+      result: {
+        prompts: [
+          { name: 'greeting', description: 'Hello' },
+          { name: 'dangerous_prompt', description: 'Does dangerous stuff' },
+          { name: 'farewell', description: 'Goodbye' },
+        ],
+      },
+      id: 2,
+    };
+
+    const filtered = filterPromptsListResponse(response, policy, 'test-server');
+    const prompts = (filtered.result as Record<string, unknown>).prompts as Array<Record<string, unknown>>;
+    expect(prompts).toHaveLength(2);
+    expect(prompts.map((p) => p.name)).toEqual(['greeting', 'farewell']);
+  });
+
+  it('returns empty array when all prompts are denied', () => {
+    const policy = new PolicyEngine(makeEnforceConfig([denyDangerousRule]));
+
+    const response: MCPResponse = {
+      jsonrpc: '2.0',
+      result: {
+        prompts: [
+          { name: 'dangerous_a', description: 'Bad' },
+          { name: 'dangerous_b', description: 'Also bad' },
+        ],
+      },
+      id: 3,
+    };
+
+    const filtered = filterPromptsListResponse(response, policy, 'test-server');
+    const prompts = (filtered.result as Record<string, unknown>).prompts as Array<Record<string, unknown>>;
+    expect(prompts).toHaveLength(0);
+  });
+
+  it('preserves id and jsonrpc in filtered response', () => {
+    const policy = new PolicyEngine(makeAllowConfig([denyDangerousRule]));
+
+    const response: MCPResponse = {
+      jsonrpc: '2.0',
+      result: {
+        prompts: [
+          { name: 'safe_prompt', description: 'Fine' },
+          { name: 'dangerous_x', description: 'Not fine' },
+        ],
+      },
+      id: 200,
+    };
+
+    const filtered = filterPromptsListResponse(response, policy, 'test-server');
+    expect(filtered.jsonrpc).toBe('2.0');
+    expect(filtered.id).toBe(200);
+    const prompts = (filtered.result as Record<string, unknown>).prompts as Array<Record<string, unknown>>;
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0].name).toBe('safe_prompt');
+  });
+
+  it('passes through response with non-object result unchanged', () => {
+    const policy = new PolicyEngine(makeEnforceConfig([denyDangerousRule]));
+    const response: MCPResponse = {
+      jsonrpc: '2.0',
+      result: 'some string',
+      id: 1,
+    };
+
+    const filtered = filterPromptsListResponse(response, policy, 'test-server');
+    expect(filtered).toBe(response);
+  });
+
+  it('passes through response with non-array prompts unchanged', () => {
+    const policy = new PolicyEngine(makeEnforceConfig([denyDangerousRule]));
+    const response: MCPResponse = {
+      jsonrpc: '2.0',
+      result: { prompts: 'not-an-array' },
+      id: 1,
+    };
+
+    const filtered = filterPromptsListResponse(response, policy, 'test-server');
+    expect(filtered).toBe(response);
+  });
+
+  it('matches prompts by description for deny rules', () => {
+    const policy = new PolicyEngine(makeAllowConfig([denyDangerousRule]));
+    const response: MCPResponse = {
+      jsonrpc: '2.0',
+      result: {
+        prompts: [
+          { name: 'helper', description: 'A dangerous operation that should be blocked' },
+          { name: 'utility', description: 'Safe utility' },
+        ],
+      },
+      id: 99,
+    };
+
+    const filtered = filterPromptsListResponse(response, policy, 'test-server');
+    const prompts = (filtered.result as Record<string, unknown>).prompts as Array<Record<string, unknown>>;
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0].name).toBe('utility');
   });
 });

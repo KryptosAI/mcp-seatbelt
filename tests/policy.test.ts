@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { PolicyEngine } from '../src/policy/engine.js';
-import { DEFAULT_POLICY } from '../src/policy/defaults.js';
+import { DEFAULT_POLICY, DEFAULT_TEMPLATES, generateDefaultPolicyFile } from '../src/policy/defaults.js';
 import { validatePolicy } from '../src/policy/schema.js';
 import { parse, stringify, parsePolicy } from '../src/policy/yaml.js';
 import type { PolicyConfig, PolicyRule } from '../src/types.js';
@@ -20,6 +20,7 @@ function makeEnforcePolicy(rules: PolicyRule[] = []): PolicyConfig {
       hosts: [],
       envVars: [],
     },
+    allowSampling: true,
   };
 }
 
@@ -431,5 +432,378 @@ describe('yaml utils', () => {
     const policy = parsePolicy(yaml);
     expect(policy.version).toBe('1');
     expect(policy.mode).toBe('enforce');
+  });
+});
+
+describe('generateDefaultPolicyFile', () => {
+  it('generates valid YAML', () => {
+    const output = generateDefaultPolicyFile();
+    expect(() => parse(output)).not.toThrow();
+  });
+
+  it('YAML contains expected top-level keys', () => {
+    const output = generateDefaultPolicyFile();
+    const parsed = parse(output) as Record<string, unknown>;
+    expect(parsed.version).toBeDefined();
+    expect(parsed.mode).toBeDefined();
+    expect(parsed.defaultAction).toBeDefined();
+    expect(Array.isArray(parsed.rules)).toBe(true);
+    expect(parsed.rules.length).toBeGreaterThan(0);
+    expect(parsed.allowlist).toBeDefined();
+  });
+
+  it('output parses with js-yaml', () => {
+    const output = generateDefaultPolicyFile();
+    const parsed = parse(output);
+    expect(parsed).not.toBeNull();
+    expect(typeof parsed).toBe('object');
+  });
+
+  it('contains block-shell-execution rule', () => {
+    const output = generateDefaultPolicyFile();
+    const parsed = parse(output) as Record<string, unknown>;
+    const rules = parsed.rules as Array<Record<string, unknown>>;
+    const shellRule = rules.find((r) => r.id === 'block-shell-execution');
+    expect(shellRule).toBeDefined();
+    expect(shellRule!.action).toBe('deny');
+  });
+});
+
+describe('DEFAULT_TEMPLATES', () => {
+  it('minimal-workstation has allow default action', () => {
+    const tmpl = DEFAULT_TEMPLATES['minimal-workstation'];
+    expect(tmpl.defaultAction).toBe('allow');
+    expect(tmpl.mode).toBe('enforce');
+    expect(tmpl.rules.length).toBeGreaterThanOrEqual(2);
+    expect(tmpl.rules.some((r: PolicyRule) => r.id === 'block-shell-execution')).toBe(true);
+    expect(tmpl.rules.some((r: PolicyRule) => r.id === 'block-credential-access')).toBe(true);
+  });
+
+  it('pci-compliance includes cardholder data rules', () => {
+    const tmpl = DEFAULT_TEMPLATES['pci-compliance'];
+    expect(tmpl.defaultAction).toBe('deny');
+    expect(tmpl.rules.some((r: PolicyRule) => r.id === 'block-cardholder-data-paths')).toBe(true);
+    expect(tmpl.rules.some((r: PolicyRule) => r.id === 'block-pan-patterns')).toBe(true);
+    expect(tmpl.rules.some((r: PolicyRule) => r.id === 'block-audit-trail-tampering')).toBe(true);
+  });
+
+  it('strict-production blocks everything with deny default', () => {
+    const tmpl = DEFAULT_TEMPLATES['strict-production'];
+    expect(tmpl.defaultAction).toBe('deny');
+    expect(tmpl.rules.some((r: PolicyRule) => r.id === 'block-all-tools')).toBe(true);
+    expect(tmpl.rules.some((r: PolicyRule) => r.id === 'deny-unknown-network')).toBe(true);
+    expect(tmpl.rules.some((r: PolicyRule) => r.id === 'deny-all-filesystem')).toBe(true);
+  });
+});
+
+describe('timeWindow rules', () => {
+  it('rule with timeWindow days skipped when day does not match', () => {
+    const rule: PolicyRule = {
+      id: 'temporal-deny',
+      description: 'Only deny on Mondays',
+      target: 'command',
+      match: 'exact',
+      values: ['risky_tool'],
+      action: 'deny',
+      timeWindow: { days: ['Monday'] },
+    };
+    const engine = new PolicyEngine(makeAllowDefaultPolicy([rule]));
+    const today = new Date();
+    const day = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][today.getDay()];
+    const result = engine.evaluate('risky_tool', '', {});
+    if (day === 'Monday') {
+      expect(result.action).toBe('deny');
+    } else {
+      expect(result.action).toBe('allow');
+    }
+  });
+
+  it('rule with timeWindow hours skipped when hour out of range', () => {
+    const now = new Date();
+    const currentHour = now.getHours();
+    const rule: PolicyRule = {
+      id: 'business-hours-only',
+      description: 'Only apply during business hours',
+      target: 'command',
+      match: 'exact',
+      values: ['test_tool'],
+      action: 'deny',
+      timeWindow: { startHour: 9, endHour: 17 },
+    };
+    const engine = new PolicyEngine(makeAllowDefaultPolicy([rule]));
+    const result = engine.evaluate('test_tool', '', {});
+    if (currentHour >= 9 && currentHour <= 17) {
+      expect(result.action).toBe('deny');
+    } else {
+      expect(result.action).toBe('allow');
+    }
+  });
+
+  it('rule with overnight timeWindow uses wrap-around logic', () => {
+    const now = new Date();
+    const currentHour = now.getHours();
+    const rule: PolicyRule = {
+      id: 'night-only',
+      description: 'Only apply at night',
+      target: 'command',
+      match: 'exact',
+      values: ['night_tool'],
+      action: 'deny',
+      timeWindow: { startHour: 22, endHour: 6 },
+    };
+    const engine = new PolicyEngine(makeAllowDefaultPolicy([rule]));
+    const result = engine.evaluate('night_tool', '', {});
+    if (currentHour >= 22 || currentHour <= 6) {
+      expect(result.action).toBe('deny');
+    } else {
+      expect(result.action).toBe('allow');
+    }
+  });
+});
+
+describe('context-condition rules', () => {
+  it('rule with clientIn matches when client is in list', () => {
+    const rule: PolicyRule = {
+      id: 'client-locked',
+      description: 'Only for specific clients',
+      target: 'command',
+      match: 'exact',
+      values: ['admin_tool'],
+      action: 'deny',
+      contextCondition: { clientIn: ['vscode', 'cursor'] },
+    };
+    const engine = new PolicyEngine(makeAllowDefaultPolicy([rule]));
+
+    expect(engine.evaluate('admin_tool', '', {}, { client: 'vscode', requestCount: 1 }).action).toBe('deny');
+    expect(engine.evaluate('admin_tool', '', {}, { client: 'cursor', requestCount: 2 }).action).toBe('deny');
+    expect(engine.evaluate('admin_tool', '', {}, { client: 'claude-desktop', requestCount: 3 }).action).toBe('allow');
+  });
+
+  it('rule with clientIn skipped when context has no client', () => {
+    const rule: PolicyRule = {
+      id: 'needs-client',
+      description: 'Requires client context',
+      target: 'command',
+      match: 'exact',
+      values: ['secret_tool'],
+      action: 'deny',
+      contextCondition: { clientIn: ['vscode'] },
+    };
+    const engine = new PolicyEngine(makeAllowDefaultPolicy([rule]));
+    const result = engine.evaluate('secret_tool', '', {});
+    expect(result.action).toBe('allow');
+  });
+
+  it('rule with maxRequestsPerMinute triggers after threshold', () => {
+    const rule: PolicyRule = {
+      id: 'rate-limit',
+      description: 'Rate limited',
+      target: 'command',
+      match: 'exact',
+      values: ['heavy_tool'],
+      action: 'deny',
+      contextCondition: { maxRequestsPerMinute: 3 },
+    };
+    const engine = new PolicyEngine(makeAllowDefaultPolicy([rule]));
+
+    expect(engine.evaluate('heavy_tool', '', {}, { client: 'test', requestCount: 1 }).action).toBe('allow');
+    expect(engine.evaluate('heavy_tool', '', {}, { client: 'test', requestCount: 2 }).action).toBe('allow');
+    expect(engine.evaluate('heavy_tool', '', {}, { client: 'test', requestCount: 3 }).action).toBe('allow');
+    expect(engine.evaluate('heavy_tool', '', {}, { client: 'test', requestCount: 4 }).action).toBe('deny');
+  });
+
+  it('contextCondition without matching condition skips rule', () => {
+    const denyRule: PolicyRule = {
+      id: 'conditional-deny',
+      description: 'Only deny for specific clients',
+      target: 'command',
+      match: 'exact',
+      values: ['test_tool'],
+      action: 'deny',
+      contextCondition: { clientIn: ['restricted-client'] },
+    };
+    const engine = new PolicyEngine(makeEnforcePolicy([denyRule]));
+    const result = engine.evaluate('test_tool', '', {}, { client: 'normal-client', requestCount: 1 });
+    expect(result.action).toBe('deny');
+    expect(result.reasons[0]).toContain('default deny');
+  });
+});
+
+describe('audit logging', () => {
+  it('getAuditLog returns empty array initially', () => {
+    const engine = new PolicyEngine(makeAuditPolicy([]));
+    expect(engine.getAuditLog()).toEqual([]);
+  });
+
+  it('records audit entries in audit mode', () => {
+    const engine = new PolicyEngine(makeAuditPolicy([denyEvalRule]));
+    engine.evaluate('eval_tool', 'runs eval', { code: 'eval(1+1)' });
+    const log = engine.getAuditLog();
+    expect(log.length).toBe(1);
+    expect(log[0].toolName).toBe('eval_tool');
+    expect(log[0].action).toBe('allow');
+    expect(log[0].reason).toContain('Audit mode');
+  });
+
+  it('clearAuditLog empties the audit log', () => {
+    const engine = new PolicyEngine(makeAuditPolicy([]));
+    engine.evaluate('tool_a', '', {});
+    engine.evaluate('tool_b', '', {});
+    expect(engine.getAuditLog().length).toBe(2);
+    engine.clearAuditLog();
+    expect(engine.getAuditLog()).toEqual([]);
+  });
+
+  it('generateAllowlistFromAudit suggests tools from allowed calls', () => {
+    const engine = new PolicyEngine(makeAuditPolicy([]));
+    const since = new Date();
+    engine.evaluate('safe_tool_a', '', { filePath: '/home/user/doc.txt' });
+    engine.evaluate('safe_tool_b', '', { url: 'https://api.example.com/data' });
+    const allowlist = engine.generateAllowlistFromAudit(since);
+    expect(allowlist.tools).toContain('safe_tool_a');
+    expect(allowlist.tools).toContain('safe_tool_b');
+    expect(allowlist.paths).toContain('/home/user/doc.txt');
+    expect(allowlist.hosts).toContain('api.example.com');
+  });
+
+  it('generateSuggestedPolicy returns valid YAML', () => {
+    const engine = new PolicyEngine(makeAuditPolicy([]));
+    engine.evaluate('my_tool', '', {});
+    const yaml = engine.generateSuggestedPolicy();
+    expect(yaml).toContain('mcp-seatbelt suggested policy');
+    const parsed = parse(yaml);
+    expect(parsed).not.toBeNull();
+    expect((parsed as Record<string, unknown>).version).toBeDefined();
+  });
+});
+
+describe('rule inheritance (extends)', () => {
+  let tempDir: string;
+
+  beforeEach(() => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-seatbelt-ext-'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it('loads base policy and merges rules', async () => {
+    const basePath = path.join(tempDir, 'base.yml');
+    const childPath = path.join(tempDir, 'child.yml');
+
+    fs.writeFileSync(basePath, stringify({
+      version: '1',
+      mode: 'enforce',
+      defaultAction: 'deny',
+      rules: [denyEvalRule],
+      allowlist: { tools: ['base_tool'], paths: [], hosts: [], envVars: [] },
+      allowSampling: false,
+    }));
+
+    fs.writeFileSync(childPath, stringify({
+      version: '1',
+      mode: 'enforce',
+      defaultAction: 'allow',
+      extends: [basePath],
+      rules: [warnExecRule],
+      allowlist: { tools: [], paths: [], hosts: [], envVars: [] },
+      allowSampling: false,
+    }));
+
+    const engine = new PolicyEngine(makeEnforcePolicy([]));
+    await engine.loadFromFile(childPath);
+
+    const result = engine.evaluate('eval_tool', 'runs eval', {});
+    expect(result.action).toBe('deny');
+
+    const warnResult = engine.evaluate('exec_tool', 'runs exec', {});
+    expect(warnResult.action).toBe('warn');
+
+    const allowlistResult = engine.evaluate('base_tool', '', {});
+    expect(allowlistResult.action).toBe('allow');
+  });
+
+  it('child rules override base rules with same id', async () => {
+    const basePath = path.join(tempDir, 'base2.yml');
+    const childPath = path.join(tempDir, 'child2.yml');
+
+    fs.writeFileSync(basePath, stringify({
+      version: '1',
+      mode: 'enforce',
+      defaultAction: 'deny',
+      rules: [denyEvalRule],
+      allowlist: { tools: [], paths: [], hosts: [], envVars: [] },
+      allowSampling: false,
+    }));
+
+    const overriddenRule: PolicyRule = {
+      id: 'block-eval',
+      description: 'Overridden to warn instead',
+      target: 'process',
+      match: 'contains',
+      values: ['eval'],
+      action: 'warn',
+    };
+
+    fs.writeFileSync(childPath, stringify({
+      version: '1',
+      mode: 'enforce',
+      defaultAction: 'allow',
+      extends: [basePath],
+      rules: [overriddenRule],
+      allowlist: { tools: [], paths: [], hosts: [], envVars: [] },
+      allowSampling: false,
+    }));
+
+    const engine = new PolicyEngine(makeEnforcePolicy([]));
+    await engine.loadFromFile(childPath);
+
+    const result = engine.evaluate('eval_tool', 'runs eval', {});
+    expect(result.action).toBe('warn');
+  });
+
+  it('detects circular extends', async () => {
+    const aPath = path.join(tempDir, 'a.yml');
+    const bPath = path.join(tempDir, 'b.yml');
+
+    fs.writeFileSync(aPath, stringify({
+      version: '1',
+      mode: 'enforce',
+      defaultAction: 'deny',
+      extends: [bPath],
+      rules: [],
+      allowlist: { tools: [], paths: [], hosts: [], envVars: [] },
+      allowSampling: false,
+    }));
+
+    fs.writeFileSync(bPath, stringify({
+      version: '1',
+      mode: 'enforce',
+      defaultAction: 'deny',
+      extends: [aPath],
+      rules: [],
+      allowlist: { tools: [], paths: [], hosts: [], envVars: [] },
+      allowSampling: false,
+    }));
+
+    const engine = new PolicyEngine(makeEnforcePolicy([]));
+    await expect(engine.loadFromFile(aPath)).rejects.toThrow('Circular extends');
+  });
+
+  it('throws when extended policy file not found', async () => {
+    const childPath = path.join(tempDir, 'orphan.yml');
+    fs.writeFileSync(childPath, stringify({
+      version: '1',
+      mode: 'enforce',
+      defaultAction: 'deny',
+      extends: ['/nonexistent/path.yml'],
+      rules: [],
+      allowlist: { tools: [], paths: [], hosts: [], envVars: [] },
+      allowSampling: false,
+    }));
+
+    const engine = new PolicyEngine(makeEnforcePolicy([]));
+    await expect(engine.loadFromFile(childPath)).rejects.toThrow('not found');
   });
 });
