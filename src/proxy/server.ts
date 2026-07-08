@@ -171,7 +171,10 @@ export class StdioClient {
       }, 30000);
 
       this.pending.set(id, { resolve, reject, timer });
-      this.child!.stdin!.write(JSON.stringify(request) + '\n');
+      if (!this.child?.stdin?.destroyed) {
+        try { this.child!.stdin!.write(JSON.stringify(request) + '\n'); }
+        catch (e: any) { if (e.code !== 'EPIPE') throw e; }
+      }
     });
   }
 

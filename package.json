@@ -4,7 +4,7 @@
   "description": "Runtime guardrails for AI agent MCP tools. Detect MCP configs, wrap risky servers with a policy proxy, and block dangerous tool calls at runtime.",
   "main": "dist/index.js",
   "bin": {
-    "mcp-seatbelt": "./dist/index.js"
+    "mcp-seatbelt": "dist/index.js"
   },
   "files": [
     "dist",
@@ -14,7 +14,7 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/anomalyco/mcp-seatbelt.git"
+    "url": "git+https://github.com/anomalyco/mcp-seatbelt.git"
   },
   "bugs": {
     "url": "https://github.com/anomalyco/mcp-seatbelt/issues"
