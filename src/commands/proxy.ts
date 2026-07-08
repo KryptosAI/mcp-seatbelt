@@ -1,11 +1,10 @@
 import { readFileSync, existsSync } from "node:fs";
 import path from "node:path";
 import chalk from "chalk";
-import { parse as yamlParse } from "../policy/yaml.js";
+import { parsePolicy } from "../policy/yaml.js";
 import { detectAll } from "../detectors/index.js";
 import { ProxyServer } from "../proxy/index.js";
 import { PolicyEngine } from "../policy/engine.js";
-import type { PolicyConfig } from "../types.js";
 
 export interface ProxyOptions {
   port: string;
@@ -22,14 +21,14 @@ export async function proxyCommand(opts: ProxyOptions): Promise<void> {
   }
 
   const raw = readFileSync(configPath, "utf-8");
-  const policyConfig = yamlParse(raw) as PolicyConfig;
+  const policyConfig = parsePolicy(raw);
   const policy = new PolicyEngine(policyConfig);
 
   console.log(chalk.cyan("\n🔐 MCP Seatbelt Proxy"));
   console.log(chalk.dim(`Mode: ${policyConfig.mode} | Port: ${opts.port}`));
   console.log();
 
-  const configs = detectAll();
+  const configs = await detectAll();
   const allServers = configs.flatMap((c) => c.servers);
 
   if (allServers.length === 0) {

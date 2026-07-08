@@ -7,10 +7,20 @@ const RISK_RULES: {
   severity: RiskFlag["severity"];
 }[] = [
   {
-    check: (srv) => /^(bash|sh|zsh|fish|pwsh|powershell|cmd|python|perl|ruby|node)$/.test(srv.command),
+    check: (srv) => /^(\/.*\/)?(bash|sh|zsh|fish|pwsh|powershell|cmd|python|perl|ruby|node)$/.test(srv.command),
     rule: "shell-interpreter",
     description: "Server uses a shell interpreter as its command",
     severity: "critical",
+  },
+  {
+    check: (srv) => {
+      if (!/^(docker|\/.*\/docker)$/.test(srv.command)) return false;
+      const allArgs = srv.args.join(" ");
+      return /(--privileged|-v\s+\/:\/host|-v\s+\/etc:\/etc|--network=host|--pid=host|--cap-add=ALL)/.test(allArgs);
+    },
+    rule: "docker-container",
+    description: "Docker container running with dangerous privileged flags",
+    severity: "high",
   },
   {
     check: (srv) => srv.args.some((a) =>
@@ -75,6 +85,21 @@ const RISK_RULES: {
     rule: "package-runner",
     description: "Server uses a package runner",
     severity: "medium",
+  },
+  {
+    check: (srv) => {
+      if (srv.command !== "npx" && srv.command !== "uvx") return false;
+      const riskyPatterns = [
+        "shell", "bash", "exec", "spawn", "child_process", "fs-extra",
+        "rimraf", "node-fetch", "axios", "puppeteer", "playwright",
+        "electron", "vm2", "eval", "vm", "process",
+      ];
+      const firstArg = srv.args[0] || "";
+      return riskyPatterns.some((p) => firstArg.toLowerCase().includes(p));
+    },
+    rule: "risky-package",
+    description: "Package runner with a package known for shell/filesystem/network access",
+    severity: "high",
   },
   {
     check: (srv) => {

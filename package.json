@@ -4,8 +4,9 @@
   "description": "Runtime guardrails for AI agent MCP tools. Detect MCP configs, wrap risky servers with a policy proxy, and block dangerous tool calls at runtime.",
   "main": "dist/index.js",
   "bin": {
-    "mcp-seatbelt": "dist/index.js"
+    "mcp-seatbelt": "./dist/index.js"
   },
+  "files": ["dist", "templates", "README.md", "LICENSE"],
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
@@ -13,7 +14,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint src/ tests/"
+    "lint": "eslint src/ tests/",
+    "prepublishOnly": "npm run build && npm test"
   },
   "keywords": ["mcp", "security", "agent", "ai", "guardrails", "proxy", "model-context-protocol"],
   "type": "module",

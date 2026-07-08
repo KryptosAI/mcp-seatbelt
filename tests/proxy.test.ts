@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { PolicyEngine } from '../src/policy/engine.js';
 import {
   interceptRequest,
@@ -174,6 +174,103 @@ describe('interceptRequest', () => {
   });
 });
 
+describe('interceptRequest warn path', () => {
+  it('returns null for tools/call with warn action (allows through)', () => {
+    const warnRule: PolicyRule = {
+      id: 'warn-suspicious',
+      description: 'Warn about suspicious operations',
+      target: 'process',
+      match: 'contains',
+      values: ['suspicious'],
+      action: 'warn',
+    };
+    const policy = new PolicyEngine(makeAllowConfig([warnRule]));
+    const request: MCPRequest = {
+      jsonrpc: '2.0',
+      method: 'tools/call',
+      params: {
+        name: 'suspicious_operation',
+        arguments: { data: 'test' },
+      },
+      id: 10,
+    };
+
+    const result = interceptRequest(request, policy, 'test-server');
+    expect(result).toBeNull();
+  });
+
+  it('returns null for tools/call when default is allow and no rules match', () => {
+    const policy = new PolicyEngine({
+      version: '1',
+      mode: 'enforce',
+      defaultAction: 'allow',
+      rules: [],
+      allowlist: { tools: [], paths: [], hosts: [], envVars: [] },
+    });
+    const request: MCPRequest = {
+      jsonrpc: '2.0',
+      method: 'tools/call',
+      params: {
+        name: 'any_tool',
+        arguments: { x: 1 },
+      },
+      id: 11,
+    };
+
+    const result = interceptRequest(request, policy, 'test-server');
+    expect(result).toBeNull();
+  });
+
+  it('returns null for tools/call when mode is audit (even with matching deny rule)', () => {
+    const policy = new PolicyEngine({
+      version: '1',
+      mode: 'audit',
+      defaultAction: 'deny',
+      rules: [denyEvalRule],
+      allowlist: { tools: [], paths: [], hosts: [], envVars: [] },
+    });
+    const request: MCPRequest = {
+      jsonrpc: '2.0',
+      method: 'tools/call',
+      params: {
+        name: 'eval_code',
+        arguments: { code: 'dangerous' },
+      },
+      id: 12,
+    };
+
+    const result = interceptRequest(request, policy, 'test-server');
+    expect(result).toBeNull();
+  });
+
+  it('returns error when params is empty object for tools/call (no name)', () => {
+    const policy = new PolicyEngine(makeEnforceConfig([]));
+    const request: MCPRequest = {
+      jsonrpc: '2.0',
+      method: 'tools/call',
+      params: {},
+      id: 400,
+    };
+
+    const result = interceptRequest(request, policy, 'test-server');
+    expect(result).not.toBeNull();
+    expect(result!.error!.code).toBe(-32602);
+    expect(result!.error!.message).toContain('missing tool name');
+  });
+
+  it('passes through prompts/list without blocking', () => {
+    const policy = new PolicyEngine(makeEnforceConfig([denyEvalRule]));
+    const request: MCPRequest = {
+      jsonrpc: '2.0',
+      method: 'prompts/list',
+      id: 500,
+    };
+
+    const result = interceptRequest(request, policy, 'test-server');
+    expect(result).toBeNull();
+  });
+});
+
 describe('filterToolsListResponse', () => {
   it('filters out denied tools from tools/list response', () => {
     const policy = new PolicyEngine(makeAllowConfig([denyEvalRule]));
@@ -284,6 +381,63 @@ describe('filterToolsListResponse', () => {
     const filtered = filterToolsListResponse(response, policy, 'test-server');
     const tools = (filtered.result as Record<string, unknown>).tools as Array<Record<string, unknown>>;
     expect(tools).toHaveLength(1);
+  });
+
+  it('returns empty tools array when ALL tools are denied', () => {
+    const policy = new PolicyEngine(makeEnforceConfig([denyEvalRule]));
+    const response: MCPResponse = {
+      jsonrpc: '2.0',
+      result: {
+        tools: [
+          { name: 'bad_eval', description: 'runs eval' },
+          { name: 'evil_eval', description: 'executes eval' },
+          { name: 'unsafe_eval', description: 'evaluates code' },
+        ],
+      },
+      id: 100,
+    };
+
+    const filtered = filterToolsListResponse(response, policy, 'test-server');
+    const tools = (filtered.result as Record<string, unknown>).tools as Array<Record<string, unknown>>;
+    expect(tools).toHaveLength(0);
+    expect(filtered.id).toBe(100);
+  });
+
+  it('preserves response id and jsonrpc when filtering denied tools', () => {
+    const policy = new PolicyEngine(makeAllowConfig([denyEvalRule]));
+    const response: MCPResponse = {
+      jsonrpc: '2.0',
+      result: {
+        tools: [
+          { name: 'bad_eval', description: 'runs eval' },
+          { name: 'good_tool', description: 'safe' },
+        ],
+      },
+      id: 200,
+    };
+
+    const filtered = filterToolsListResponse(response, policy, 'test-server');
+    expect(filtered.jsonrpc).toBe('2.0');
+    expect(filtered.id).toBe(200);
+    const tools = (filtered.result as Record<string, unknown>).tools as Array<Record<string, unknown>>;
+    expect(tools).toHaveLength(1);
+    expect(tools[0].name).toBe('good_tool');
+  });
+
+  it('returns response unchanged when tools array is already empty', () => {
+    const policy = new PolicyEngine(makeEnforceConfig([denyEvalRule]));
+    const response: MCPResponse = {
+      jsonrpc: '2.0',
+      result: {
+        tools: [],
+      },
+      id: 300,
+    };
+
+    const filtered = filterToolsListResponse(response, policy, 'test-server');
+    const tools = (filtered.result as Record<string, unknown>).tools as Array<Record<string, unknown>>;
+    expect(tools).toHaveLength(0);
+    expect(filtered.id).toBe(300);
   });
 });
 

@@ -117,3 +117,88 @@ export function filterToolsListResponse(
     },
   };
 }
+
+export function filterResourcesListResponse(
+  response: MCPResponse,
+  policy: PolicyEngine,
+  serverName: string,
+): MCPResponse {
+  if (!response.result || typeof response.result !== 'object') {
+    return response;
+  }
+
+  const result = response.result as Record<string, unknown>;
+  const resources = result.resources;
+  if (!Array.isArray(resources)) {
+    return response;
+  }
+
+  const filteredResources = resources.filter((resource: unknown) => {
+    if (typeof resource !== 'object' || resource === null) return true;
+    const r = resource as Record<string, unknown>;
+    const resourceName = r.name ?? r.uri;
+    if (typeof resourceName !== 'string') return true;
+
+    const evalResult = policy.evaluate(resourceName, '', {});
+
+    if (evalResult.action === 'deny') {
+      console.warn(
+        `[mcp-seatbelt:warn] Filtered resource "${resourceName}" from ${serverName} resources/list: ${evalResult.reasons.join('; ')}`,
+      );
+    }
+
+    return evalResult.action !== 'deny';
+  });
+
+  return {
+    ...response,
+    result: {
+      ...result,
+      resources: filteredResources,
+    },
+  };
+}
+
+export function filterPromptsListResponse(
+  response: MCPResponse,
+  policy: PolicyEngine,
+  serverName: string,
+): MCPResponse {
+  if (!response.result || typeof response.result !== 'object') {
+    return response;
+  }
+
+  const result = response.result as Record<string, unknown>;
+  const prompts = result.prompts;
+  if (!Array.isArray(prompts)) {
+    return response;
+  }
+
+  const filteredPrompts = prompts.filter((prompt: unknown) => {
+    if (typeof prompt !== 'object' || prompt === null) return true;
+    const p = prompt as Record<string, unknown>;
+    const promptName = p.name;
+    if (typeof promptName !== 'string') return true;
+
+    const description =
+      typeof p.description === 'string' ? p.description : '';
+
+    const evalResult = policy.evaluate(promptName, description, {});
+
+    if (evalResult.action === 'deny') {
+      console.warn(
+        `[mcp-seatbelt:warn] Filtered prompt "${promptName}" from ${serverName} prompts/list: ${evalResult.reasons.join('; ')}`,
+      );
+    }
+
+    return evalResult.action !== 'deny';
+  });
+
+  return {
+    ...response,
+    result: {
+      ...result,
+      prompts: filteredPrompts,
+    },
+  };
+}

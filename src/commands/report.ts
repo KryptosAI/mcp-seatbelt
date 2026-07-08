@@ -12,7 +12,7 @@ export interface ReportOptions {
 export async function reportCommand(opts: ReportOptions): Promise<void> {
   console.log(chalk.cyan("\n📊 Generating MCP risk report...\n"));
 
-  const configs = detectAll();
+  const configs = await detectAll();
 
   if (configs.length === 0) {
     console.log(chalk.yellow("No MCP configurations detected."));

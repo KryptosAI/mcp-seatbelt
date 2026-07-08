@@ -36,12 +36,12 @@ describe('detectAll', () => {
     }
   });
 
-  it('returns empty array when no configs exist', () => {
-    const results = detectAll();
+  it('returns empty array when no configs exist', async () => {
+    const results = await detectAll();
     expect(results).toEqual([]);
   });
 
-  it('detects claude-desktop config', () => {
+  it('detects claude-desktop config', async () => {
     writeJson(
       path.join(tempDir, 'Library', 'Application Support', 'Claude', 'claude_desktop_config.json'),
       {
@@ -54,7 +54,7 @@ describe('detectAll', () => {
       },
     );
 
-    const results = detectAll();
+    const results = await detectAll();
     expect(results).toHaveLength(1);
     expect(results[0].client).toBe('claude-desktop');
     expect(results[0].servers).toHaveLength(1);
@@ -63,7 +63,7 @@ describe('detectAll', () => {
     expect(results[0].servers[0].args).toEqual(['--config', '/tmp/config.json']);
   });
 
-  it('detects cursor config', () => {
+  it('detects cursor config', async () => {
     writeJson(path.join(tempDir, '.cursor', 'mcp.json'), {
       mcpServers: {
         'cursor-server': {
@@ -73,14 +73,14 @@ describe('detectAll', () => {
       },
     });
 
-    const results = detectAll();
+    const results = await detectAll();
     expect(results).toHaveLength(1);
     expect(results[0].client).toBe('cursor');
     expect(results[0].servers).toHaveLength(1);
     expect(results[0].servers[0].name).toBe('cursor-server');
   });
 
-  it('detects windsurf config', () => {
+  it('detects windsurf config', async () => {
     writeJson(path.join(tempDir, '.codeium', 'windsurf', 'mcp.json'), {
       mcpServers: {
         'windsurf-server': {
@@ -90,12 +90,12 @@ describe('detectAll', () => {
       },
     });
 
-    const results = detectAll();
+    const results = await detectAll();
     expect(results).toHaveLength(1);
     expect(results[0].client).toBe('windsurf');
   });
 
-  it('detects project .mcp.json config', () => {
+  it('detects project .mcp.json config', async () => {
     writeJson(path.join(tempDir, '.mcp.json'), {
       mcpServers: {
         'project-server': {
@@ -105,13 +105,13 @@ describe('detectAll', () => {
       },
     });
 
-    const results = detectAll();
+    const results = await detectAll();
     expect(results).toHaveLength(1);
     expect(results[0].client).toBe('project');
     expect(results[0].servers[0].name).toBe('project-server');
   });
 
-  it('detects project mcp.json config', () => {
+  it('detects project mcp.json config', async () => {
     writeJson(path.join(tempDir, 'mcp.json'), {
       mcpServers: {
         'root-server': {
@@ -121,13 +121,13 @@ describe('detectAll', () => {
       },
     });
 
-    const results = detectAll();
+    const results = await detectAll();
     expect(results).toHaveLength(1);
     expect(results[0].client).toBe('project');
     expect(results[0].servers[0].name).toBe('root-server');
   });
 
-  it('detects multiple clients simultaneously', () => {
+  it('detects multiple clients simultaneously', async () => {
     writeJson(
       path.join(tempDir, 'Library', 'Application Support', 'Claude', 'claude_desktop_config.json'),
       {
@@ -142,13 +142,13 @@ describe('detectAll', () => {
       },
     });
 
-    const results = detectAll();
+    const results = await detectAll();
     expect(results).toHaveLength(2);
     const clients = results.map((r) => r.client).sort();
     expect(clients).toEqual(['claude-desktop', 'cursor']);
   });
 
-  it('deduplicates servers by command+args+name', () => {
+  it('deduplicates servers by command+args+name', async () => {
     writeJson(path.join(tempDir, '.mcp.json'), {
       mcpServers: {
         'dup-server': { command: 'my-app', args: ['server.js'] },
@@ -160,28 +160,28 @@ describe('detectAll', () => {
       },
     });
 
-    const results = detectAll();
+    const results = await detectAll();
     expect(results).toHaveLength(1);
     expect(results[0].servers).toHaveLength(1);
     expect(results[0].servers[0].name).toBe('dup-server');
   });
 
-  it('handles malformed JSON gracefully', () => {
+  it('handles malformed JSON gracefully', async () => {
     const configPath = path.join(tempDir, '.cursor', 'mcp.json');
     fs.mkdirSync(path.dirname(configPath), { recursive: true });
     fs.writeFileSync(configPath, '{ invalid json!!! }');
 
-    const results = detectAll();
+    const results = await detectAll();
     expect(results).toHaveLength(0);
   });
 
-  it('skips config files that do not exist', () => {
-    const results = detectAll();
+  it('skips config files that do not exist', async () => {
+    const results = await detectAll();
     expect(Array.isArray(results)).toBe(true);
     expect(results).toHaveLength(0);
   });
 
-  it('assigns risk assessments to detected servers', () => {
+  it('assigns risk assessments to detected servers', async () => {
     writeJson(path.join(tempDir, '.cursor', 'mcp.json'), {
       mcpServers: {
         'dangerous-server': {
@@ -191,13 +191,13 @@ describe('detectAll', () => {
       },
     });
 
-    const results = detectAll();
+    const results = await detectAll();
     expect(results).toHaveLength(1);
     expect(results[0].servers[0].risk.level).not.toBe('low');
     expect(results[0].servers[0].risk.flags.length).toBeGreaterThan(0);
   });
 
-  it('handles servers without args gracefully', () => {
+  it('handles servers without args gracefully', async () => {
     writeJson(path.join(tempDir, '.cursor', 'mcp.json'), {
       mcpServers: {
         'no-args-server': {
@@ -206,7 +206,7 @@ describe('detectAll', () => {
       },
     });
 
-    const results = detectAll();
+    const results = await detectAll();
     expect(results).toHaveLength(1);
     expect(results[0].servers[0].args).toEqual([]);
     expect(results[0].servers[0].command).toBe('simple-server');

@@ -1,5 +1,6 @@
 import yaml from "js-yaml";
 import type { PolicyConfig } from "../types.js";
+import { validatePolicy } from "./schema.js";
 
 export function parse(raw: string): unknown {
   return yaml.load(raw);
@@ -15,5 +16,6 @@ export function stringify(obj: unknown): string {
 }
 
 export function parsePolicy(raw: string): PolicyConfig {
-  return parse(raw) as PolicyConfig;
+  const parsed = parse(raw);
+  return validatePolicy(parsed);
 }

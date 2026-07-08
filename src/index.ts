@@ -21,11 +21,13 @@ program
   .description("Detect MCP configs, assess risk, generate policy")
   .option("-o, --output <path>", "Output directory", ".mcp-seatbelt")
   .option("--policy <mode>", "Policy mode: audit or enforce", "audit")
+  .option("--yes", "Skip prompts and update client configs automatically")
   .action(async (opts) => {
     const { initCommand } = await import("./commands/init.js");
     await initCommand({
       output: opts.output as string,
       policy: opts.policy as string,
+      yes: Boolean(opts.yes),
     });
   });
 
@@ -64,3 +66,12 @@ program
   });
 
 program.parse();
+
+export { ProxyServer, interceptRequest, filterToolsListResponse, filterResourcesListResponse, filterPromptsListResponse } from './proxy/index.js';
+export type { RegisteredServer, MCPRequest, MCPResponse } from './proxy/index.js';
+export { PolicyEngine } from './policy/engine.js';
+export { validatePolicy } from './policy/schema.js';
+export { DEFAULT_POLICY, generateDefaultPolicy, generateDefaultPolicyFile } from './policy/defaults.js';
+export { detectAll, parseMcpServers } from './detectors/index.js';
+export { assessRisk } from './detectors/risk.js';
+export * from './types.js';

@@ -1,6 +1,7 @@
 import type { PolicyConfig, PolicyRule } from '../types.js';
 import { load, dump } from 'js-yaml';
 import { readFile, writeFile } from 'node:fs/promises';
+import { validatePolicy } from './schema.js';
 
 interface EvaluateResult {
   action: 'allow' | 'deny' | 'warn';
@@ -86,7 +87,6 @@ export class PolicyEngine {
   async loadFromFile(yamlPath: string): Promise<void> {
     const content = await readFile(yamlPath, 'utf-8');
     const parsed = load(content) as unknown;
-    const { validatePolicy } = await import('./schema.js');
     this.config = validatePolicy(parsed);
   }
 

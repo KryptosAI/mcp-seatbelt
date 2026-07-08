@@ -8,6 +8,8 @@ import {
   type MCPResponse,
   interceptRequest,
   filterToolsListResponse,
+  filterResourcesListResponse,
+  filterPromptsListResponse,
 } from './intercept.js';
 import type { McpServerConfig, ProxyStats } from '../types.js';
 
@@ -23,7 +25,7 @@ interface ServerRegistration {
   command: string;
   args: string[];
   env?: Record<string, string>;
-  transport: 'stdio' | 'http';
+  transport: 'stdio' | 'http' | 'sse';
   url?: string;
 }
 
@@ -33,7 +35,7 @@ interface PendingRequest {
   timer: NodeJS.Timeout;
 }
 
-class StdioClient {
+export class StdioClient {
   private child: ChildProcess | null = null;
   private pending: Map<number | string, PendingRequest> = new Map();
   private command: string;
@@ -83,6 +85,39 @@ class StdioClient {
       }
     });
 
+    rl.on('error', (err: Error) => {
+      console.error(`[mcp-seatbelt:${this.command}] Readline error: ${err.message}`);
+    });
+
+    rl.on('close', () => {
+      // readline closed; process exit handler will trigger reconnect
+    });
+
+    this.child.stderr?.on('data', (data: Buffer) => {
+      let handled = false;
+      const text = data.toString();
+      for (const line of text.split('\n').map((l) => l.trim()).filter(Boolean)) {
+        try {
+          const response: MCPResponse = JSON.parse(line);
+          const id = response.id;
+          if (id !== undefined && id !== null) {
+            const pending = this.pending.get(id);
+            if (pending) {
+              clearTimeout(pending.timer);
+              this.pending.delete(id);
+              pending.resolve(response);
+              handled = true;
+            }
+          }
+        } catch {
+          // not JSON-RPC
+        }
+      }
+      if (!handled) {
+        process.stderr.write(`[mcp-seatbelt:${this.command}] ${text}`);
+      }
+    });
+
     this.child.on('exit', (code, signal) => {
       if (!this.stopped) {
         setTimeout(() => this.spawnProcess(), 1000);
@@ -94,10 +129,6 @@ class StdioClient {
         );
       }
       this.pending.clear();
-    });
-
-    this.child.stderr?.on('data', (data: Buffer) => {
-      process.stderr.write(`[mcp-seatbelt:${this.command}] ${data.toString()}`);
     });
   }
 
@@ -137,28 +168,205 @@ class StdioClient {
   }
 }
 
-class HttpClient {
+export class HttpClient {
   private url: string;
+  private pendingControllers: Set<AbortController> = new Set();
+  private stopped = false;
 
   constructor(url: string) {
     this.url = url;
   }
 
-  async start(): Promise<void> {}
+  async start(): Promise<void> {
+    this.stopped = false;
+  }
 
-  stop(): void {}
+  stop(): void {
+    this.stopped = true;
+    for (const controller of this.pendingControllers) {
+      controller.abort();
+    }
+    this.pendingControllers.clear();
+  }
 
   async send(request: MCPRequest): Promise<MCPResponse> {
-    const response = await fetch(this.url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(request),
-    });
-    return response.json() as Promise<MCPResponse>;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 30000);
+    this.pendingControllers.add(controller);
+
+    try {
+      const response = await fetch(this.url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(request),
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeoutId);
+      this.pendingControllers.delete(controller);
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      return response.json() as Promise<MCPResponse>;
+    } catch (error) {
+      clearTimeout(timeoutId);
+      this.pendingControllers.delete(controller);
+
+      if (error instanceof Error && error.name === 'AbortError') {
+        throw new Error(`Request timeout: ${request.method}`);
+      }
+      throw error;
+    }
   }
 }
 
-type McpClient = StdioClient | HttpClient;
+export class SseClient {
+  private url: string;
+  private pending: Map<number | string, PendingRequest> = new Map();
+  private streamAbort: AbortController | null = null;
+  private stopped = false;
+  private reconnectTimer: NodeJS.Timeout | null = null;
+  private messageEndpoint: string;
+
+  constructor(url: string) {
+    this.url = url;
+    this.messageEndpoint = url.replace(/\/sse\/?$/, '');
+    if (!this.messageEndpoint.endsWith('/message')) {
+      if (this.messageEndpoint.endsWith('/')) {
+        this.messageEndpoint += 'message';
+      } else {
+        this.messageEndpoint += '/message';
+      }
+    }
+  }
+
+  async start(): Promise<void> {
+    this.stopped = false;
+    this.connectSSE();
+  }
+
+  private connectSSE(): void {
+    if (this.stopped) return;
+
+    this.streamAbort = new AbortController();
+
+    fetch(this.url, {
+      headers: { 'Accept': 'text/event-stream' },
+      signal: this.streamAbort.signal,
+    })
+      .then(async (response) => {
+        if (!response.ok || !response.body) {
+          throw new Error(`SSE connection failed: HTTP ${response.status}`);
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+
+          let eventData = '';
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              eventData += line.slice(6);
+            } else if (line === '') {
+              if (eventData) {
+                this.handleSSEMessage(eventData);
+                eventData = '';
+              }
+            }
+          }
+        }
+      })
+      .catch((err: unknown) => {
+        if (!this.stopped) {
+          console.error(`[mcp-seatbelt:sse] Connection error: ${err instanceof Error ? err.message : 'Unknown error'}`);
+          this.scheduleReconnect();
+        }
+      });
+  }
+
+  private handleSSEMessage(data: string): void {
+    try {
+      const response: MCPResponse = JSON.parse(data);
+      const id = response.id;
+      if (id !== undefined && id !== null) {
+        const pending = this.pending.get(id);
+        if (pending) {
+          clearTimeout(pending.timer);
+          this.pending.delete(id);
+          pending.resolve(response);
+        }
+      }
+    } catch {
+      // ignore unparseable SSE data
+    }
+  }
+
+  private scheduleReconnect(): void {
+    if (this.stopped) return;
+    this.reconnectTimer = setTimeout(() => this.connectSSE(), 1000);
+  }
+
+  async send(request: MCPRequest): Promise<MCPResponse | null> {
+    if (request.id === undefined || request.id === null) {
+      fetch(this.messageEndpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(request),
+      }).catch(() => {});
+      return null;
+    }
+
+    const id = request.id;
+
+    return new Promise<MCPResponse>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pending.delete(id);
+        reject(new Error(`Request timeout: ${request.method}`));
+      }, 30000);
+
+      this.pending.set(id, { resolve, reject, timer });
+
+      fetch(this.messageEndpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(request),
+      }).catch((err) => {
+        clearTimeout(timer);
+        this.pending.delete(id);
+        reject(new Error(`SSE POST failed: ${err instanceof Error ? err.message : 'Unknown error'}`));
+      });
+    });
+  }
+
+  stop(): void {
+    this.stopped = true;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    if (this.streamAbort) {
+      this.streamAbort.abort();
+      this.streamAbort = null;
+    }
+    for (const [, pending] of this.pending) {
+      clearTimeout(pending.timer);
+      pending.reject(new Error('Transport stopped'));
+    }
+    this.pending.clear();
+  }
+}
+
+type McpClient = StdioClient | HttpClient | SseClient;
 
 export class ProxyServer {
   private policy: PolicyEngine;
@@ -201,16 +409,18 @@ export class ProxyServer {
       risk: server.risk.level,
     });
 
-    this.registerServer(server.name, server.command, server.args, server.env);
+    this.registerServer(server);
   }
 
-  registerServer(
-    name: string,
-    command: string,
-    args: string[],
-    env?: Record<string, string>,
-  ): void {
-    this.servers.set(name, { name, command, args, env, transport: 'stdio' });
+  registerServer(config: McpServerConfig): void {
+    this.servers.set(config.name, {
+      name: config.name,
+      command: config.command,
+      args: config.args,
+      env: config.env,
+      transport: config.transport,
+      url: config.url,
+    });
   }
 
   async start(): Promise<void> {
@@ -219,7 +429,10 @@ export class ProxyServer {
 
     for (const [name, reg] of this.servers) {
       let client: McpClient;
-      if (reg.transport === 'http' && reg.url) {
+      if (reg.transport === 'sse' && reg.url) {
+        client = new SseClient(reg.url);
+        await (client as SseClient).start();
+      } else if (reg.transport === 'http' && reg.url) {
         client = new HttpClient(reg.url);
       } else {
         client = new StdioClient(reg.command, reg.args, reg.env);
@@ -353,6 +566,22 @@ export class ProxyServer {
 
         if (mcpRequest.method === 'tools/list') {
           const filtered = filterToolsListResponse(
+            upstreamResponse,
+            this.policy,
+            serverName,
+          );
+          this.stats.allowed++;
+          res.json(filtered);
+        } else if (mcpRequest.method === 'resources/list') {
+          const filtered = filterResourcesListResponse(
+            upstreamResponse,
+            this.policy,
+            serverName,
+          );
+          this.stats.allowed++;
+          res.json(filtered);
+        } else if (mcpRequest.method === 'prompts/list') {
+          const filtered = filterPromptsListResponse(
             upstreamResponse,
             this.policy,
             serverName,

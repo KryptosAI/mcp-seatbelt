@@ -4,7 +4,7 @@ import { detectAll } from "../detectors/index.js";
 export async function checkCommand(): Promise<void> {
   console.log(chalk.cyan("\n🔍 Quick MCP risk check...\n"));
 
-  const configs = detectAll();
+  const configs = await detectAll();
 
   if (configs.length === 0) {
     console.log(chalk.yellow("No MCP configurations detected."));
