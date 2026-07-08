@@ -1,234 +1,263 @@
-# 🔐 MCP Seatbelt
+# MCP Seatbelt — Runtime Guardrails for AI Agent Tools
 
-**Runtime Guardrails for AI Agent Tools**
+**Stop dangerous MCP tool calls before they reach your system. Scan, proxy, enforce.**
 
+[![CI](https://github.com/KryptosAI/mcp-seatbelt/actions/workflows/mcp-seatbelt.yml/badge.svg)](https://github.com/KryptosAI/mcp-seatbelt/actions/workflows/mcp-seatbelt.yml)
 [![npm version](https://img.shields.io/npm/v/mcp-seatbelt?color=blue)](https://www.npmjs.com/package/mcp-seatbelt)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
-[![CI](https://img.shields.io/badge/CI-passing-brightgreen)]()
-[![Node: ≥22](https://img.shields.io/badge/node-%E2%89%A522-339933)]()
-[![MCP: compatible](https://img.shields.io/badge/MCP-compatible-purple)]()
+[![Node: ≥22](https://img.shields.io/badge/node-%E2%89%A522-339933)](https://nodejs.org)
 
-MCP Seatbelt detects every MCP server in your environment, wraps risky tools behind a policy-enforcing proxy, and blocks dangerous calls before they reach your system — all without changing your tools or workflow.
+<img src="docs/demo.gif" alt="MCP Seatbelt demo" width="700"/>
 
-```bash
-npx mcp-seatbelt init
-```
+<!-- ![Demo](docs/demo.gif) -->
 
 ---
 
-## What it does
+## The Problem
 
-AI coding agents (Cursor, Claude, ChatGPT, VS Code, Windsurf) connect to MCP servers that expose file systems, terminals, and network access. MCP Seatbelt adds a **runtime safety layer** between the agent and those servers:
+AI coding agents (Cursor, Claude, VS Code, ChatGPT, Windsurf, and others) connect to MCP servers that expose file systems, shell interpreters, network access, and environment variables. Static scanners and manifest audits can tell you that you're exposed — but they can't stop a tool call mid-execution. By the time a scanner flags a risky server, the agent may have already run a destructive command, exfiltrated credentials, or reached out to an untrusted endpoint.
 
-1. **Detect** — scans your system for MCP server configurations across all supported clients
-2. **Assess** — scores every server for risk (shell access, network egress, credential exposure, etc.)
-3. **Wrap** — starts a local proxy that sits between your agent and each MCP server
-4. **Enforce** — evaluates every tool call against your policy: allow, deny, or warn
-5. **Report** — generates human-readable risk reports for review and compliance
-
-```
-Agent → MCP Seatbelt Proxy (:9420) → [policy check] → Real MCP Server
-                                              ↓
-                                        ❌ blocked
-```
+**MCP Seatbelt adds a runtime enforcement layer.** It sits between the agent and every MCP server, evaluates each tool call against a policy you control, and blocks dangerous requests before they touch your files, shells, or network.
 
 ---
 
-## Features
+## What It Does
 
-- **5-client support** — Cursor, Claude Desktop, VS Code, Windsurf, and ChatGPT Desktop detected automatically
-- **Default-deny policy** — zero-trust posture out of the box; whitelist only what you trust
-- **Runtime proxy** — transparent JSON-RPC 2.0 proxy that intercepts and filters every tool call
-- **Risk engine** — 11 built-in risk rules covering shell interpreters, sandbox bypass, credential leaks, process spawning, and more
-- **Dual mode** — `audit` logs violations without blocking; `enforce` blocks denied calls
-- **Risk reports** — markdown or JSON reports for pull requests, compliance audits, and dashboards
-- **CI/CD integration** — GitHub Actions workflow ships with the template
+- **Detects MCP configs across 8 clients** — Automatically discovers MCP server configurations from Cursor, Claude Desktop, VS Code (user + workspace), ChatGPT Desktop, Codex, JetBrains IDEs (IntelliJ, PyCharm, WebStorm, etc.), Windsurf, and project-local files (`.mcp.json`, `.mcp/config.json`). No manual wiring required.
 
----
+- **Runtime proxy with policy enforcement** — Starts a transparent JSON-RPC 2.0 proxy on port 9420. Every tool call, resource access, and prompt request is intercepted, evaluated against your policy, and allowed, denied, warned, or redacted. Three modes: `default-deny` (zero-trust), `allowlist` (whitelist known-good), and `audit` (log only, no blocking).
 
-## Install
+- **13 built-in risk rules** — Covers shell interpreters (`bash`, `sh`, `zsh`, `python`, `node`), sandbox bypass (`--no-sandbox`, `--disable-web-security`), credential exposure in environment variables, Docker privileged containers, raw network tools (`curl`, `nc`, `telnet`), process spawning, destructive filesystem operations, remote URL access, risky package runners (`npx`, `uvx`), privilege escalation (`sudo`, `chmod`), and sensitive filesystem paths.
 
-```bash
-npm install -g mcp-seatbelt
-```
+- **Policy engine with time-windowed rules, learning mode, rule inheritance, and context awareness** — Rules support regex pattern matching, exact-match, and substring containment. Restrict tool access by day of week and hour range (`timeWindow`). Condition rules on client identity or request rate (`contextCondition`). Policies can `extend` parent templates. The `audit` mode serves as a learning mode: run it to observe actual tool usage before switching to `enforce`.
 
-Requires **Node.js ≥ 22**.
+- **Live dashboard, SARIF reports, CI/CD integration, and observatory bridge** — A real-time HTML dashboard shows request stats, block rates, connected clients, and recent blocked calls. Generate SARIF 2.1.0 reports for GitHub Code Scanning. Import security findings from [mcp-observatory](https://github.com/anomalyco/mcp-observatory) and automatically convert them to policy rules. `mcp-seatbelt check` exits non-zero in CI when critical risks are detected.
 
 ---
 
-## Usage
-
-### `init` — Scan, assess, generate
-
-Detects MCP servers from all clients, assesses risk, and writes a policy file and a risk report.
+## Quick Start
 
 ```bash
-mcp-seatbelt init                    # writes to .mcp-seatbelt/
-mcp-seatbelt init --policy enforce   # generate enforcing policy (recommended)
-mcp-seatbelt init --output ./config  # custom output directory
+npx mcp-seatbelt init          # scan all clients, assess risk, generate policy
+npx mcp-seatbelt proxy         # start the enforcing proxy on port 9420
+npx mcp-seatbelt dashboard     # view live stats at http://localhost:9421
 ```
 
-Output:
-- `.mcp-seatbelt/policy.yml` — your editable policy rules
-- `.mcp-seatbelt/risk-report.md` — summary of every server and its risk flags
+On first run, `init` creates `.mcp-seatbelt/policy.yml` (your editable ruleset) and `.mcp-seatbelt/risk-report.md` (a summary of every server and its risk flags). The proxy starts in `audit` mode by default — observe actual tool usage, then switch to `enforce` when ready.
 
-### `proxy` — Start the guardrail runtime
+---
 
-Starts the policy-enforcing proxy on port 9420. Every MCP request from your agent flows through it.
+## How It Works
 
-```bash
-mcp-seatbelt proxy                       # start with default config
-mcp-seatbelt proxy --port 9421           # custom port
-mcp-seatbelt proxy --config ./my-policy.yml  # custom policy path
+```
+┌─────────┐     JSON-RPC 2.0     ┌────────────────────────────────────┐     JSON-RPC 2.0     ┌─────────────┐
+│  Agent  │ ────────────────────▶ │         MCP Seatbelt Proxy        │ ────────────────────▶ │  MCP Server │
+│ (Cursor) │                      │          (localhost:9420)          │                       │  (filesystem)│
+└─────────┘                      │                                    │                      └─────────────┘
+                                 │  ┌──────────────┐  ┌───────────┐  │
+                                 │  │ Policy Engine│──│Interceptor │  │
+                                 │  │   ┌───────┐  │  │  ┌──────┐ │  │
+                                 │  │   │ Rules  │  │  │  │Allow?│ │  │
+                                 │  │   │Allowlist│  │  │  │Deny? │ │  │
+                                 │  │   │Templates│  │  │  │Redact│ │  │
+                                 │  │   │TimeWin │  │  │  │Warn? │ │  │
+                                 │  │   └───────┘  │  │  └──────┘ │  │
+                                 │  └──────────────┘  └─────┬─────┘  │
+                                 │                          │        │
+                                 │                    ┌─────▼─────┐  │
+                                 │                    │ Transport │  │
+                                 │                    │  Client   │  │
+                                 │                    └───────────┘  │
+                                 └────────────────────────────────────┘
 ```
 
-### `report` — Generate a risk snapshot
+- **Proxy** — Listens for inbound JSON-RPC 2.0 requests from the AI agent. Manages server registration, proxied URL routing, and connection lifecycle.
+- **Policy Engine** — Evaluates each request against the loaded policy. Checks tool name, arguments, and description against rules. Returns `allow`, `deny`, `warn`, or `redact` with reasons.
+- **Interceptor** — Applies the engine's decision. Allowed calls are forwarded. Denied calls receive an MCP error response. Warned calls proceed but are logged. `redact` replaces argument values matching credential patterns with `***`.
+- **Transport Client** — Forwards allowed requests to the real upstream MCP server and streams responses back to the agent.
 
-Produces a report from the current MCP landscape without running the proxy.
+---
 
-```bash
-mcp-seatbelt report                    # markdown to .mcp-seatbelt/report.md
-mcp-seatbelt report --json             # JSON output
-mcp-seatbelt report -o /tmp/audit.md   # custom path
-```
+## Comparison
 
-### `check` — Quick CI-friendly audit
+| Feature | mcp-seatbelt | mcp-firewall | mcp-guardian | Prismor | mcp-proxy |
+|---|---|---|---|---|---|
+| Runtime blocking | ✓ | ✓ | ✓ | ✓ | ✗ |
+| Pre-install scanning | ✓ | ✗ | ✗ | ✗ | ✗ |
+| 8+ client detection | ✓ | ✗ | ✗ | ✗ | ✗ |
+| Argument redaction | ✓ | ✗ | ✗ | ✗ | ✗ |
+| Learning mode | ✓ | ✗ | ✗ | ✗ | ✗ |
+| Live dashboard | ✓ | ✗ | ✓ | ✗ | ✗ |
+| SARIF / GitHub Code Scanning | ✓ | ✗ | ✗ | ✗ | ✗ |
+| mcp-observatory integration | ✓ | ✗ | ✗ | ✗ | ✗ |
 
-Scans for critical risks and exits non-zero if any are found. Designed for CI pipelines.
-
-```bash
-mcp-seatbelt check   # exit 0 = clean, exit 1 = critical risks
-```
+Seatbelt is the only tool that combines pre-install scanning with runtime enforcement, covers all major AI agent clients, redacts credential arguments inline, and bridges static analysis results from mcp-observatory into live policy rules.
 
 ---
 
 ## Policy Reference
 
-The policy file (`.mcp-seatbelt/policy.yml`) controls what your agent can and cannot do.
+### CLI
+
+```bash
+mcp-seatbelt init --policy enforce     # generate an enforcing policy
+mcp-seatbelt proxy --config my.yml     # start proxy with custom policy
+mcp-seatbelt report --sarif           # SARIF 2.1.0 output for CI
+mcp-seatbelt check                    # exit 1 if critical risks found
+mcp-seatbelt diff old.yml new.yml     # compare two policy files
+mcp-seatbelt import-observatory       # convert observatory findings to rules
+```
+
+### Built-in Rules (Default Policy)
+
+| Rule | Target | Description |
+|---|---|---|
+| `block-shell-execution` | command | Blocks direct shell interpreter invocations (bash, sh, zsh, cmd, powershell) |
+| `block-sensitive-paths` | file | Blocks filesystem writes to `/etc`, `/root`, `~/.ssh`, `~/.aws`, `C:\Windows` |
+| `block-credential-access` | command | Blocks tools whose descriptions mention passwords, secrets, tokens, keys |
+| `redact-credentials` | command | Redacts argument values whose key names match credential patterns |
+| `block-private-network` | network | Blocks HTTP requests to private/loopback address ranges |
+| `block-process-execution` | process | Blocks tools that spawn child processes or evaluate code |
+| `allow-filesystem-writes-business-hours` | file | Allows filesystem writes only Mon-Fri, 09:00-17:00 |
+
+### Policy Templates
+
+| Template | Default Action | Use Case |
+|---|---|---|
+| `minimal-workstation` | allow | Blocks shell execution and credential access only; everything else permitted |
+| `pci-compliance` | deny | Blocks shell, credentials, PAN/cardholder data paths, audit log tampering |
+| `strict-production` | deny | Blocks all tool calls, network requests, and filesystem operations by default |
+
+Templates can be extended via the `extends` field in your policy file:
 
 ```yaml
 version: '1'
-mode: enforce            # audit | enforce
-defaultAction: deny      # allow | deny
-
+mode: enforce
+extends:
+  - pci-compliance
 rules:
-  - id: block-shell-execution
-    description: Block tools that invoke shell interpreters directly
-    target: command      # command | file | network | env | process
-    match: pattern       # exact | pattern | contains
-    values:
-      - ^bash$
-      - ^/bin/sh$
-    action: deny         # allow | deny | warn
-
-allowlist:
-  tools: []
-  paths: []
-  hosts: []
-  envVars: []
+  - id: custom-rule
+    target: network
+    match: pattern
+    values: ['.*']
+    action: deny
 ```
 
-### Rule fields
+### Rule Schema
 
-| Field | Options | Description |
-|-------|---------|-------------|
-| `target` | `command`, `file`, `network`, `env`, `process` | What aspect of the call to inspect |
-| `match` | `exact`, `pattern`, `contains` | How to compare values |
-| `action` | `allow`, `deny`, `warn` | What to do on match |
-| `values` | `string[]` | List of strings/regex patterns to match against |
+```yaml
+rules:
+  - id: example-rule                # unique identifier
+    description: What this blocks   # human-readable explanation
+    target: command                 # command | file | network | env | process
+    match: pattern                  # exact | pattern | contains
+    values:                         # list of strings or regex patterns
+      - '^rm\s+-rf'
+    action: deny                    # allow | deny | warn | redact
+    timeWindow:                     # optional — restrict by day/hour
+      days: [Monday, Tuesday, Wednesday, Thursday, Friday]
+      startHour: 9
+      endHour: 17
+    contextCondition:               # optional — restrict by client or rate
+      clientIn: [cursor, claude-desktop]
+      maxRequestsPerMinute: 60
+```
 
 ### Allowlist
 
-Entries in the allowlist bypass all deny rules. Use this after running `init` to whitelist your known-good servers, paths, and hosts.
+Entries in the allowlist bypass all deny rules. Use after running `init` to whitelist known-good tools, paths, hosts, and environment variables:
+
+```yaml
+allowlist:
+  tools: [safe-tool, read-only-fs]
+  paths: [/home/user/projects/]
+  hosts: [api.github.com]
+  envVars: [NODE_ENV, PATH]
+```
 
 ---
 
-## Integration
+## Client Integration Guide
 
-After running `mcp-seatbelt init` and `mcp-seatbelt proxy`, update your client's MCP config to point at the proxy:
+After starting the proxy, update each client's MCP configuration to route through `localhost:9420`. The proxy prints a table of proxy URLs on startup — copy and paste them.
 
-### Cursor
-
+**Cursor** — `~/.cursor/mcp.json`
 ```json
-// ~/.cursor/mcp.json
-{
-  "mcpServers": {
-    "my-server": {
-      "url": "http://localhost:9420/my-server"
-    }
-  }
-}
+{ "mcpServers": { "my-server": { "url": "http://localhost:9420/my-server" } } }
 ```
 
-### Claude Desktop
-
+**Claude Desktop** — `~/Library/Application Support/Claude/claude_desktop_config.json`
 ```json
-// ~/Library/Application Support/Claude/claude_desktop_config.json
-{
-  "mcpServers": {
-    "my-server": {
-      "url": "http://localhost:9420/my-server"
-    }
-  }
-}
+{ "mcpServers": { "my-server": { "url": "http://localhost:9420/my-server" } } }
 ```
 
-### VS Code
-
+**VS Code** — `.vscode/mcp.json` or User settings
 ```json
-// .vscode/mcp.json or User settings
-{
-  "servers": {
-    "my-server": {
-      "url": "http://localhost:9420/my-server"
-    }
-  }
-}
+{ "servers": { "my-server": { "url": "http://localhost:9420/my-server" } } }
 ```
 
-### ChatGPT Desktop
-
+**ChatGPT Desktop** — App config
 ```json
-// ~/Library/Application Support/com.openai.chat/com.openai.chat.plist or config
-{
-  "mcpServers": {
-    "my-server": {
-      "url": "http://localhost:9420/my-server"
-    }
-  }
-}
+{ "mcpServers": { "my-server": { "url": "http://localhost:9420/my-server" } } }
 ```
 
-### Windsurf / Codex
+**Codex / JetBrains / Windsurf** — Same pattern: replace the `command`/`args` transport with `"url": "http://localhost:9420/<server-name>"`.
 
-Same pattern — replace the `command`/`args` transport with a `url` pointing to `http://localhost:9420/<server-name>`.
+---
 
-> **Tip:** The proxy prints a table of proxy URLs on startup. Copy-paste them into your client config.
+## Combined with mcp-observatory
+
+[mcp-observatory](https://github.com/anomalyco/mcp-observatory) scans MCP servers at rest — auditing source code, supply chain posture, and manifest hygiene. Seatbelt provides the runtime counterpart.
+
+**Workflow:**
+
+1. **Scan first** — Run mcp-observatory to audit every MCP server before installation. It produces a security findings artifact (JSON).
+2. **Convert** — `mcp-seatbelt import-observatory ./observatory-results.json` converts findings into policy rules.
+3. **Enforce at runtime** — The proxy loads those rules and blocks any tool call that matches an observatory finding, closing the loop from static analysis to live enforcement.
+
+The observatory bridge (`mergeObservatoryPolicy`) can merge findings into an existing seatbelt policy without overwriting your custom rules.
+
+---
+
+## Enterprise
+
+[mcp-observatory Cloud](https://observatory.anomaly.ai) provides hosted dashboards, private CI scanning, certification badges, and supply-chain compliance reports for teams and organizations. Seatbelt integrates as the runtime enforcement layer — observatory validates what you install; seatbelt controls what it can do at execution time.
+
+- Observatory Cloud: hosted scanning, private registries, team dashboards
+- Seatbelt: on-machine proxy with policy enforcement, redaction, and live monitoring
+- Together: scan at rest + enforce at runtime = complete MCP security lifecycle
 
 ---
 
 ## Roadmap
 
-- [x] Multi-client detection (Cursor, Claude, VS Code, Windsurf, ChatGPT)
-- [x] Policy engine with regex/exact/contains matching
-- [x] Runtime JSON-RPC proxy with request interception
-- [x] Risk assessment engine (11 rules)
-- [x] Markdown + JSON reports
-- [x] CI/CD GitHub Actions workflow
-- [ ] Dashboard web UI for real-time monitoring
-- [ ] Prometheus metrics endpoint
-- [ ] OPA/Rego policy integration
-- [ ] Per-tool granularity (allow tool A but deny tool B on same server)
-- [ ] Request logging and audit trails
-- [ ] Plugin system for custom risk rules
-- [ ] macOS/Linux system service (launchd / systemd)
+- [x] Multi-client detection (8 clients)
+- [x] Runtime JSON-RPC 2.0 proxy with request interception
+- [x] Policy engine with regex/exact/contains matching, time windows, context conditions
+- [x] Risk assessment engine (13 rules)
+- [x] Live dashboard web UI with auto-refresh
+- [x] SARIF 2.1.0 and markdown report generation
+- [x] mcp-observatory integration bridge
+- [x] CI/CD check command (`mcp-seatbelt check`)
+- [ ] Policy diff and migration tooling ([#12](https://github.com/anomalyco/mcp-seatbelt/issues/12))
+- [ ] Prometheus `/metrics` endpoint for observability stacks ([#15](https://github.com/anomalyco/mcp-seatbelt/issues/15))
+- [ ] OPA/Rego policy integration ([#18](https://github.com/anomalyco/mcp-seatbelt/issues/18))
+- [ ] Per-tool granularity — allow tool A but deny tool B on the same server ([#20](https://github.com/anomalyco/mcp-seatbelt/issues/20))
+- [ ] Persistent audit trail and request logging with SQLite ([#22](https://github.com/anomalyco/mcp-seatbelt/issues/22))
+- [ ] Plugin system for custom risk rules ([#25](https://github.com/anomalyco/mcp-seatbelt/issues/25))
 
 ---
 
 ## Contributing
 
-See [`CONTRIBUTING.md`](./CONTRIBUTING.md) (if available) or open an issue with your idea. PRs welcome.
+See [`CONTRIBUTING.md`](./CONTRIBUTING.md) for development setup, testing instructions, and pull request guidelines. Security issues should follow the process in [`SECURITY.md`](./SECURITY.md).
+
+- **212 tests** across 6 test suites (CLI, detectors, policy engine, proxy server, proxy interception, reports)
+- `npm test` runs the full Vitest suite; `npm run typecheck` verifies TypeScript
+- PRs should include tests for new rules, detectors, or policy features
+
+---
 
 ## License
 
-MIT © [mcp-seatbelt contributors](https://github.com/anomalyco/mcp-seatbelt)
+MIT — [mcp-seatbelt contributors](https://github.com/anomalyco/mcp-seatbelt/graphs/contributors)

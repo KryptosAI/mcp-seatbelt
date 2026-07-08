@@ -2,10 +2,74 @@
 
 Programmatic API reference for using mcp-seatbelt as a library.
 
+> **API Stability:** All public APIs follow semver. Breaking changes to exported interfaces will be accompanied by a major version bump.
+
+## Table of Contents
+
+- [Quick Start](#quick-start)
+- [Proxy Server](#proxy-server)
+  - [ProxyServer](#proxyserver)
+  - [RegisteredServer](#registeredserver)
+  - [interceptRequest](#interceptrequest)
+  - [filterToolsListResponse](#filtertoolslistresponse)
+  - [filterResourcesListResponse](#filterresourceslistresponse)
+  - [filterPromptsListResponse](#filterpromptslistresponse)
+  - [MCPRequest](#mcprequest)
+  - [MCPResponse](#mcpresponse)
+- [Policy Engine](#policy-engine)
+  - [PolicyEngine](#policyengine)
+  - [validatePolicy](#validatepolicy)
+  - [DEFAULT_POLICY](#default_policy)
+  - [generateDefaultPolicy](#generatedefaultpolicy)
+  - [generateDefaultPolicyFile](#generatedefaultpolicyfile)
+  - [Policy Types](#policy-types)
+- [Detectors](#detectors)
+  - [detectAll](#detectall)
+  - [detectByClient](#detectbyclient)
+  - [parseMcpServers](#parsemcpservers)
+  - [assessRisk](#assessrisk)
+- [Reports](#reports)
+  - [generateMarkdownReport](#generatemarkdownreport)
+  - [generateJsonReport](#generatejsonreport)
+  - [generateSarifReport](#generatesarifreport)
+- [Observatory Bridge](#observatory-bridge)
+  - [importObservatoryResults](#importobservatoryresults)
+  - [mergeObservatoryPolicy](#mergeobservatorypolicy)
+  - [discoverObservatoryArtifacts](#discoverobservatoryartifacts)
+- [Types](#types)
+
+---
+
 ## Quick Start
 
 ```ts
 import { ProxyServer, PolicyEngine, detectAll, validatePolicy, assessRisk } from 'mcp-seatbelt';
+```
+
+```ts
+// Full example: detect configs, create a policy, start the proxy
+import { ProxyServer, PolicyEngine, detectAll, generateMarkdownReport } from 'mcp-seatbelt';
+
+const configs = await detectAll();
+
+const policy = new PolicyEngine({
+  version: '1',
+  mode: 'enforce',
+  defaultAction: 'deny',
+  rules: [],
+  allowlist: { tools: [], paths: [], hosts: [], envVars: [] },
+});
+
+const proxy = new ProxyServer(policy, 9420);
+
+for (const config of configs) {
+  for (const server of config.servers) {
+    proxy.register(server, config.client);
+  }
+}
+
+await proxy.start();
+console.log(generateMarkdownReport(configs));
 ```
 
 ---
@@ -154,6 +218,8 @@ interface MCPResponse {
 
 ## Policy Engine
 
+mcp-seatbelt ships with **7 built-in policy rules** and **3 reusable policy templates** (audit, enforce, and permissive). The test suite includes **212 tests** to validate policy evaluation, risk assessment, and proxy behavior.
+
 ### `PolicyEngine`
 
 Evaluates tool calls against a policy configuration.
@@ -238,7 +304,7 @@ try {
 
 ### `DEFAULT_POLICY`
 
-A ready-to-use default policy with deny rules for shell execution, sensitive paths, credentials, private networks, and process spawning.
+A ready-to-use default policy with 7 built-in deny rules for shell execution, sensitive paths, credentials, private networks, process spawning, and more.
 
 **Import:** `import { DEFAULT_POLICY } from 'mcp-seatbelt'`
 
@@ -259,7 +325,7 @@ function generateDefaultPolicy(
 
 ### `generateDefaultPolicyFile`
 
-Generates the default policy file content as a YAML string.
+Generates the default policy file content as a YAML string using one of the 3 built-in policy templates.
 
 ```ts
 function generateDefaultPolicyFile(): string
@@ -299,7 +365,7 @@ interface PolicyRule {
 
 ### `detectAll`
 
-Scans the system for MCP configurations across all supported clients and returns typed results.
+Scans the system for MCP configurations across 8 supported clients and returns typed results.
 
 **Import:** `import { detectAll } from 'mcp-seatbelt'`
 
@@ -373,7 +439,7 @@ interface RiskFlag {
 
 Generates a human-readable markdown risk report from detected configs.
 
-**Import:** `import { generateMarkdownReport } from './report/generator.js'`
+**Import:** `import { generateMarkdownReport } from 'mcp-seatbelt'`
 
 ```ts
 function generateMarkdownReport(configs: McpClientConfig[]): string
@@ -383,6 +449,8 @@ function generateMarkdownReport(configs: McpClientConfig[]): string
 
 Generates a machine-readable JSON risk report.
 
+**Import:** `import { generateJsonReport } from 'mcp-seatbelt'`
+
 ```ts
 function generateJsonReport(configs: McpClientConfig[]): RiskReport
 ```
@@ -391,7 +459,7 @@ function generateJsonReport(configs: McpClientConfig[]): RiskReport
 
 Generates a SARIF 2.1.0 JSON log for integration with GitHub Code Scanning and other SARIF-compatible tools.
 
-**Import:** `import { generateSarifReport } from './report/sarif.js'`
+**Import:** `import { generateSarifReport } from 'mcp-seatbelt'`
 
 ```ts
 function generateSarifReport(configs: McpClientConfig[]): SARIFLog
@@ -407,7 +475,7 @@ Maps risk levels: critical→error, high→error, medium→warning, low→note. 
 
 Converts mcp-observatory security findings to seatbelt policy rules.
 
-**Import:** `import { importObservatoryResults } from './integrations/observatory.js'`
+**Import:** `import { importObservatoryResults } from 'mcp-seatbelt'`
 
 ```ts
 function importObservatoryResults(artifactPath: string): PolicyRule[]
@@ -416,6 +484,8 @@ function importObservatoryResults(artifactPath: string): PolicyRule[]
 ### `mergeObservatoryPolicy`
 
 Merges observatory findings into an existing seatbelt policy.
+
+**Import:** `import { mergeObservatoryPolicy } from 'mcp-seatbelt'`
 
 ```ts
 function mergeObservatoryPolicy(
@@ -427,6 +497,8 @@ function mergeObservatoryPolicy(
 ### `discoverObservatoryArtifacts`
 
 Auto-discovers observatory artifact files from `.mcp-observatory/runs/` and `.mcp-observatory-metrics/`.
+
+**Import:** `import { discoverObservatoryArtifacts } from 'mcp-seatbelt'`
 
 ```ts
 function discoverObservatoryArtifacts(basePath?: string): string[]

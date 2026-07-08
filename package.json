@@ -7,6 +7,14 @@
     "mcp-seatbelt": "./dist/index.js"
   },
   "files": ["dist", "templates", "README.md", "LICENSE"],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/anomalyco/mcp-seatbelt.git"
+  },
+  "bugs": {
+    "url": "https://github.com/anomalyco/mcp-seatbelt/issues"
+  },
+  "homepage": "https://github.com/anomalyco/mcp-seatbelt",
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
@@ -17,7 +25,17 @@
     "lint": "eslint src/ tests/",
     "prepublishOnly": "npm run build && npm test"
   },
-  "keywords": ["mcp", "security", "agent", "ai", "guardrails", "proxy", "model-context-protocol"],
+  "keywords": [
+    "mcp",
+    "security",
+    "agent",
+    "ai",
+    "guardrails",
+    "proxy",
+    "runtime",
+    "model-context-protocol",
+    "mcp-security"
+  ],
   "type": "module",
   "license": "MIT",
   "dependencies": {

@@ -24,7 +24,6 @@ npm run dev        # runs the CLI with tsx
 npm run build      # compiles TypeScript to dist/
 npm run test       # runs the test suite
 npm run typecheck  # checks TypeScript types without emitting
-npm run lint       # runs ESLint (not yet fully configured)
 ```
 
 ## Project Structure
@@ -130,7 +129,7 @@ Tests are written with Vitest. Test files mirror the source structure:
 - TypeScript with strict mode
 - ES modules (`"type": "module"`)
 - 2-space indentation (see `.editorconfig`)
-- No semicolons (consistent with existing code)
+- Prefer no semicolons (TypeScript's ASI handles this)
 - Single quotes for strings
 - `chalk` for terminal output coloring
 - `js-yaml` for YAML parsing/serialization
@@ -144,9 +143,39 @@ Tests are written with Vitest. Test files mirror the source structure:
 5. Open a PR against `main`
 6. PR description should explain what changed and why
 
+### PR Template
+
+When opening a pull request, please include:
+
+- **What** — a clear description of the change
+- **Why** — the motivation behind the change (reference an issue if applicable)
+- **How** — a brief overview of the implementation approach
+- **Testing** — how the change was tested and any new test coverage added
+- **Checklist**:
+  - [ ] `npm run typecheck` passes
+  - [ ] `npm test` passes
+  - [ ] New behavior is covered by tests
+  - [ ] Documentation is updated (README, API.md, CONTRIBUTING.md as appropriate)
+
+### Issue Templates
+
+When filing an issue, use one of the following templates:
+
+- **Bug Report** — unexpected behavior, crashes, or incorrect output. Include steps to reproduce, expected vs actual behavior, and environment details (OS, Node version, mcp-seatbelt version).
+- **Feature Request** — describe the feature, the problem it solves, and any proposed approach.
+- **Security Vulnerability** — do **not** open a public issue. See the [Security](#security) section below.
+
 ## Security
 
-If you discover a security issue in mcp-seatbelt itself, please do **not** open a public issue. Instead, report it to the maintainers privately.
+If you discover a security issue in mcp-seatbelt itself, please do **not** open a public issue. Instead:
+
+- Email **william@banksey.com** with details of the vulnerability
+- Include steps to reproduce, affected versions, and any proposed mitigations
+- See [`SECURITY.md`](./SECURITY.md) for our full security policy, supported versions, and responsible disclosure timeline
+
+## Code of Conduct
+
+This project adopts the [Contributor Covenant Code of Conduct](https://www.contributor-covenant.org/version/2/1/code_of_conduct/). By participating, you agree to uphold its standards. All contributors and maintainers are expected to foster a welcoming and respectful community.
 
 ## License
 
