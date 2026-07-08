@@ -93,7 +93,7 @@ function diffPolicies(oldPolicy: PolicyConfig, newPolicy: PolicyConfig): DiffRes
       oldRule.action !== newRule.action ||
       oldRule.target !== newRule.target ||
       oldRule.description !== newRule.description ||
-      JSON.stringify(oldRule.values.sort()) !== JSON.stringify(newRule.values.sort())
+      JSON.stringify((oldRule.values ?? []).sort()) !== JSON.stringify((newRule.values ?? []).sort())
     ) {
       modified.push(newRule.id);
     }
