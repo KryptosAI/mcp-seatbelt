@@ -4,6 +4,16 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="description" content="MCP Security Platform — Scan Before You Trust. Enforce at Runtime. The only open-source platform that secures MCP servers from install to runtime.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0%25' y1='0%25' x2='100%25' y2='100%25'%3E%3Cstop offset='0%25' style='stop-color:%233b82f6'/%3E%3Cstop offset='100%25' style='stop-color:%238b5cf6'/%3E%3C/linearGradient%3E%3C/defs%3E%3Cpath d='M16 2L4 7v10c0 7.6 5.1 14.7 12 16 6.9-1.3 12-8.4 12-16V7L16 2z' fill='url(%23g)'/%3E%3Cpath d='M11 16l3 3 7-7' fill='none' stroke='%23fff' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<meta property="og:title" content="MCP Security Platform — Scan Before You Trust. Enforce at Runtime.">
+<meta property="og:description" content="Open-source MCP security scanning (mcp-observatory) and runtime enforcement (mcp-seatbelt). 686 tests. 30+ CLI commands. MIT licensed.">
+<meta property="og:image" content="https://kryptosai.github.io/mcp-seatbelt/demo.gif">
+<meta property="og:url" content="https://kryptosai.github.io/mcp-seatbelt/">
+<meta property="og:type" content="website">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="MCP Security Platform — Scan Before You Trust. Enforce at Runtime.">
+<meta name="twitter:description" content="Open-source MCP security scanning (mcp-observatory) and runtime enforcement (mcp-seatbelt). 686 tests. 30+ CLI commands. MIT licensed.">
+<meta name="twitter:image" content="https://kryptosai.github.io/mcp-seatbelt/demo.gif">
 <title>MCP Security Platform — Scan Before You Trust. Enforce at Runtime.</title>
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -380,6 +390,10 @@ code, pre, .mono {
   padding-top: 20px; font-size: 0.82rem; color: var(--text-muted);
 }
 
+/* ───── Skip Link ───── */
+.skip-link { position: absolute; top: -100px; left: 16px; background: var(--accent-blue); color: #fff; padding: 8px 16px; border-radius: var(--radius-sm); z-index: 200; font-weight: 600; font-size: 0.9rem; transition: top 0.2s; }
+.skip-link:focus { top: 8px; }
+
 /* ───── Mobile ───── */
 @media (max-width: 768px) {
   .nav-links { display: none; }
@@ -419,6 +433,8 @@ code, pre, .mono {
 </head>
 <body>
 
+<a href="#main-content" class="skip-link">Skip to content</a>
+
 <!-- ───── Navigation ───── -->
 <nav class="nav" id="nav">
   <div class="nav-inner">
@@ -436,17 +452,24 @@ code, pre, .mono {
 </nav>
 
 <!-- ───── Hero ───── -->
-<header class="hero">
+<header class="hero" id="main-content">
   <div class="hero-badge">Open Source · MIT Licensed</div>
   <h1>Scan Before You Trust.<br>Enforce at Runtime.</h1>
-  <p class="hero-subtitle">The only open-source platform that secures MCP servers from install to runtime. Scan for vulnerabilities with observatory. Block dangerous tool calls with seatbelt.</p>
+  <p class="hero-subtitle">The only open-source platform that secures MCP servers from install to runtime. Scan for vulnerabilities with mcp-observatory. Block dangerous tool calls with mcp-seatbelt.</p>
+  <div style="display:flex;gap:8px;justify-content:center;margin-bottom:36px;flex-wrap:wrap;">
+    <img src="https://img.shields.io/github/stars/KryptosAI/mcp-observatory?style=flat-square&color=8b5cf6" alt="GitHub stars for mcp-observatory" loading="lazy">
+    <img src="https://img.shields.io/npm/dt/@kryptosai/mcp-observatory?style=flat-square&color=22d3ee" alt="npm downloads for @kryptosai/mcp-observatory" loading="lazy">
+    <img src="https://img.shields.io/github/stars/KryptosAI/mcp-seatbelt?style=flat-square&color=8b5cf6" alt="GitHub stars for mcp-seatbelt" loading="lazy">
+    <img src="https://img.shields.io/npm/dt/@kryptosai/mcp-seatbelt?style=flat-square&color=22d3ee" alt="npm downloads for @kryptosai/mcp-seatbelt" loading="lazy">
+  </div>
   <div class="hero-buttons">
     <a href="#quickstart" class="btn btn-primary" id="btnQuick">Quick Start ↓</a>
     <a href="https://github.com/KryptosAI/mcp-seatbelt" target="_blank" rel="noopener" class="btn btn-secondary">GitHub →</a>
     <a href="https://github.com/KryptosAI/mcp-observatory" target="_blank" rel="noopener" class="btn btn-secondary">Observatory →</a>
   </div>
+  <p style="color:var(--text-muted);font-size:0.82rem;margin-bottom:32px;">Built with TypeScript · MIT Licensed · 686 tests · Zero Dependencies</p>
   <div class="demo-container">
-    <img src="/docs/demo.gif" alt="MCP Security Platform demo" loading="lazy">
+    <img src="demo.gif" alt="MCP Security Platform demo" loading="lazy">
   </div>
 </header>
 
@@ -497,6 +520,10 @@ code, pre, .mono {
         <div class="card-stat"><strong>474</strong> tests</div>
         <div class="card-stat"><strong>22+</strong> CLI commands</div>
       </div>
+      <div style="display:flex;gap:8px;margin-bottom:18px;flex-wrap:wrap;">
+        <img src="https://img.shields.io/github/stars/KryptosAI/mcp-observatory?style=flat-square&color=8b5cf6" alt="GitHub stars for mcp-observatory" loading="lazy">
+        <img src="https://img.shields.io/npm/dt/@kryptosai/mcp-observatory?style=flat-square&color=22d3ee" alt="npm downloads for @kryptosai/mcp-observatory" loading="lazy">
+      </div>
       <a href="https://github.com/KryptosAI/mcp-observatory" target="_blank" rel="noopener" class="card-cta">View on GitHub →</a>
     </div>
 
@@ -511,11 +538,15 @@ code, pre, .mono {
         <li>Learning mode — auto-generate policies</li>
         <li>Time-windowed policy rules</li>
         <li>Policy inheritance &amp; composition</li>
-        <li><code>npx mcp-seatbelt</code></li>
+        <li><code>npx @kryptosai/mcp-seatbelt</code></li>
       </ul>
       <div class="card-stats">
         <div class="card-stat"><strong>212</strong> tests</div>
         <div class="card-stat"><strong>7</strong> CLI commands</div>
+      </div>
+      <div style="display:flex;gap:8px;margin-bottom:18px;flex-wrap:wrap;">
+        <img src="https://img.shields.io/github/stars/KryptosAI/mcp-seatbelt?style=flat-square&color=8b5cf6" alt="GitHub stars for mcp-seatbelt" loading="lazy">
+        <img src="https://img.shields.io/npm/dt/@kryptosai/mcp-seatbelt?style=flat-square&color=22d3ee" alt="npm downloads for @kryptosai/mcp-seatbelt" loading="lazy">
       </div>
       <a href="https://github.com/KryptosAI/mcp-seatbelt" target="_blank" rel="noopener" class="card-cta">View on GitHub →</a>
     </div>
@@ -648,13 +679,13 @@ code, pre, .mono {
     <div class="qs-card">
       <h4>Step 2 — Import findings</h4>
       <pre><span class="c1"># Import findings</span>
-<span class="c2">npx</span> mcp-seatbelt init && \
+<span class="c2">npx</span> @kryptosai/mcp-seatbelt init && \
   import-observatory</pre>
     </div>
     <div class="qs-card">
       <h4>Step 3 — Enforce at runtime</h4>
       <pre><span class="c1"># Enforce at runtime</span>
-<span class="c2">npx</span> mcp-seatbelt proxy \
+<span class="c2">npx</span> @kryptosai/mcp-seatbelt proxy \
   --policy enforce</pre>
     </div>
   </div>
@@ -692,7 +723,7 @@ code, pre, .mono {
         <li>SSO &amp; team management</li>
         <li>Priority support &amp; SLA</li>
       </ul>
-      <a href="mailto:william@banksey.com" class="btn btn-purple" style="width:100%;justify-content:center;">Contact Sales</a>
+      <a href="#" rel="nofollow" data-email="william" data-domain="banksey.com" class="btn btn-purple" style="width:100%;justify-content:center;" onclick="this.href='mailto:'+this.dataset.email+'&#64;'+this.dataset.domain;return true;">Contact Sales</a>
     </div>
   </div>
 </section>
@@ -701,23 +732,23 @@ code, pre, .mono {
 <div class="stats-bar">
   <div class="stats-grid" id="statsGrid">
     <div class="stat-box">
-      <div class="stat-box-number" data-target="686">474 + 212 = 686</div>
+      <div class="stat-box-number" data-target="686" data-prefix="474 + 212 = ">474 + 212 = 686</div>
       <div class="stat-box-label">Tests</div>
     </div>
     <div class="stat-box">
-      <div class="stat-box-number">8</div>
+      <div class="stat-box-number" data-target="8">8</div>
       <div class="stat-box-label">Client Detectors</div>
     </div>
     <div class="stat-box">
-      <div class="stat-box-number">20+</div>
+      <div class="stat-box-number" data-target="20" data-suffix="+">20+</div>
       <div class="stat-box-label">Security Rules</div>
     </div>
     <div class="stat-box">
-      <div class="stat-box-number">30+</div>
+      <div class="stat-box-number" data-target="29" data-suffix="+">29+</div>
       <div class="stat-box-label">CLI Commands</div>
     </div>
     <div class="stat-box">
-      <div class="stat-box-number">47K+</div>
+      <div class="stat-box-number" data-target="47" data-suffix="K+">47K+</div>
       <div class="stat-box-label">MCP Ecosystem</div>
     </div>
   </div>
@@ -737,17 +768,17 @@ code, pre, .mono {
         <div class="footer-col">
           <h5>npm</h5>
           <a href="https://www.npmjs.com/package/@kryptosai/mcp-observatory" target="_blank" rel="noopener">@kryptosai/mcp-observatory</a>
-          <a href="https://www.npmjs.com/package/mcp-seatbelt" target="_blank" rel="noopener">mcp-seatbelt</a>
+          <a href="https://www.npmjs.com/package/@kryptosai/mcp-seatbelt" target="_blank" rel="noopener">mcp-seatbelt</a>
         </div>
         <div class="footer-col">
           <h5>Resources</h5>
-          <a href="https://github.com/KryptosAI/mcp-seatbelt/tree/main/docs" target="_blank" rel="noopener">Documentation</a>
+          <a href="https://github.com/KryptosAI/mcp-seatbelt#readme" target="_blank" rel="noopener">Documentation</a>
           <a href="#features">Features</a>
           <a href="#pricing">Pricing</a>
         </div>
         <div class="footer-col">
           <h5>Contact</h5>
-          <a href="mailto:william@banksey.com">william@banksey.com</a>
+          <a href="#" rel="nofollow" data-email="william" data-domain="banksey.com" onclick="this.href='mailto:'+this.dataset.email+'&#64;'+this.dataset.domain;this.textContent=this.dataset.email+'&#64;'+this.dataset.domain;return true;">Contact</a>
         </div>
       </div>
     </div>
@@ -776,16 +807,18 @@ code, pre, .mono {
         observed = true;
         var nums = document.querySelectorAll('.stat-box-number[data-target]');
         nums.forEach(function(el) {
-          var target = parseInt(el.getAttribute('data-target'), 10);
-          var start = 0;
-          var duration = 1200;
-          var startTime = null;
-          function step(timestamp) {
-            if (!startTime) startTime = timestamp;
-            var progress = Math.min((timestamp - startTime) / duration, 1);
-            var eased = 1 - Math.pow(1 - progress, 3);
-            var current = Math.floor(eased * target);
-            el.textContent = '474 + 212 = ' + current;
+            var target = parseInt(el.getAttribute('data-target'), 10);
+            var prefix = el.getAttribute('data-prefix') || '';
+            var suffix = el.getAttribute('data-suffix') || '';
+            var start = 0;
+            var duration = 1200;
+            var startTime = null;
+            function step(timestamp) {
+              if (!startTime) startTime = timestamp;
+              var progress = Math.min((timestamp - startTime) / duration, 1);
+              var eased = 1 - Math.pow(1 - progress, 3);
+              var current = Math.floor(eased * target);
+              el.textContent = prefix + current + suffix;
             if (progress < 1) requestAnimationFrame(step);
           }
           requestAnimationFrame(step);
