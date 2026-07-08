@@ -1,0 +1,96 @@
+name: mcp-seatbelt
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - '.mcp-seatbelt/policy.yml'
+      - '**/.mcp.json'
+      - '**/mcp.json'
+      - 'package.json'
+  pull_request:
+    branches: [main, master]
+    paths:
+      - '.mcp-seatbelt/policy.yml'
+      - '**/.mcp.json'
+      - '**/mcp.json'
+      - 'package.json'
+  schedule:
+    - cron: '0 8 * * 1' # Every Monday at 8am UTC
+  workflow_dispatch: {}
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    permissions:
+      contents: read
+      pull-requests: write
+      actions: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate policy
+        run: npx mcp-seatbelt init --policy enforce
+
+      - name: Run security check
+        id: check
+        continue-on-error: true
+        run: npx mcp-seatbelt check
+
+      - name: Post PR comment on critical risks
+        if: steps.check.outcome == 'failure' && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+
+            const reportPath = '.mcp-seatbelt/risk-report.md';
+            let body = '## 🔐 mcp-seatbelt: Critical Risks Detected\n\n';
+
+            if (fs.existsSync(reportPath)) {
+              const report = fs.readFileSync(reportPath, 'utf-8');
+              body += report;
+            } else {
+              body += 'Critical risk flags were found in one or more MCP servers.\n\n';
+              body += 'Run `npx mcp-seatbelt init` locally and review `.mcp-seatbelt/policy.yml`.';
+            }
+
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body,
+            });
+
+      - name: Upload policy artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcp-seatbelt-policy
+          path: .mcp-seatbelt/policy.yml
+          if-no-files-found: warn
+
+      - name: Upload report artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcp-seatbelt-report
+          path: .mcp-seatbelt/risk-report.md
+          if-no-files-found: warn
+
+      - name: Fail on critical risks
+        if: steps.check.outcome == 'failure'
+        run: exit 1

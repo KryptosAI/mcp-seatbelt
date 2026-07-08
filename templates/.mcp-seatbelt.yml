@@ -1,0 +1,173 @@
+# =============================================================================
+# mcp-seatbelt Policy Configuration
+# =============================================================================
+# This file defines guardrails for MCP server tool calls made by AI agents.
+# Check this into git so your team shares the same security posture.
+#
+# Quick reference:
+#   mode:         audit (log only) | enforce (block denied calls)
+#   defaultAction: allow (permit unmatched) | deny (block unmatched, recommended)
+#
+# Rules define what to allow, deny, or warn on.
+#   target:  command | file | network | env | process
+#   match:   exact | pattern (regex) | contains (substring)
+#   action:  allow | deny | warn
+#
+# The allowlist provides blanket exceptions for trusted tools, paths,
+# hosts, and environment variables.
+# =============================================================================
+
+version: '1'
+
+# --- Policy Mode -----------------------------------------------------------
+# audit   — Log all policy violations but allow calls through. Use this when
+#           rolling out mcp-seatbelt for the first time to measure impact.
+# enforce — Actively block calls that match a deny rule. Use this in CI and
+#           production once your allowlist is dialled in.
+mode: enforce
+
+# --- Default Action --------------------------------------------------------
+# deny  — Any tool call that does not match an explicit allow rule is blocked.
+#         This is the safest posture (default-deny / zero-trust).
+# allow — Calls that do not match any rule are permitted. Use with caution.
+defaultAction: deny
+
+# --- Rules -----------------------------------------------------------------
+# Rules are evaluated in order. The first matching rule wins.
+# Each rule has:
+#   id          — Unique, human-readable identifier (kebab-case recommended)
+#   description — What the rule blocks and why
+#   target      — What aspect of the call to inspect
+#   match       — Comparison strategy
+#   values      — List of strings to match against
+#   action      — What to do when a match is found
+rules:
+
+  # ── Shell execution ──
+  # Block tools whose command invokes a shell interpreter directly.
+  # Shells give the AI agent arbitrary code execution on the host.
+  - id: block-shell-execution
+    description: Block tools that invoke shell interpreters directly
+    target: command
+    match: pattern
+    values:
+      - ^bash$
+      - ^sh$
+      - ^zsh$
+      - ^cmd$
+      - ^powershell$
+      - ^pwsh$
+      - ^/bin/bash$
+      - ^/bin/sh$
+      - ^/bin/zsh$
+      - ^/usr/bin/bash$
+      - ^/usr/bin/sh$
+      - ^/usr/bin/zsh$
+      - \bbash\s+-c\b
+      - \bsh\s+-c\b
+      - \bzsh\s+-c\b
+      - \bcmd\.exe\s+/c\b
+      - \bpowershell\s+-Command\b
+      - \bpwsh\s+-Command\b
+    action: deny
+
+  # ── Sensitive filesystem paths ──
+  # Prevent the agent from writing to system configs, SSH keys,
+  # cloud credentials, and OS directories.
+  - id: block-sensitive-paths
+    description: Block filesystem writes to sensitive system and configuration paths
+    target: file
+    match: pattern
+    values:
+      - ^/etc(/|$)
+      - ^/root(/|$)
+      - ^/home/[^/]+/\.ssh(/|$)
+      - ^/home/[^/]+/\.aws(/|$)
+      - ^~/\.ssh(/|$)
+      - ^~/\.aws(/|$)
+      - ^/var(/|$)
+      - ^/usr(/|$)
+      - ^/System(/|$)
+      - ^C:\\Windows
+      - ^C:\\Program Files
+      - ^%SystemRoot%
+      - ^%ProgramFiles%
+    action: deny
+
+  # ── Credential leakage ──
+  # Block tools whose description suggests they handle secrets.
+  # The proxy inspects `tools/list` responses and blocks access.
+  - id: block-credential-access
+    description: Block tools whose descriptions indicate credential or secret access
+    target: command
+    match: contains
+    values:
+      - password
+      - secret
+      - token
+      - api_key
+      - credential
+      - private key
+    action: deny
+
+  # ── Private network egress ──
+  # Stop the agent from phoning home to internal services, loopback
+  # addresses, or RFC 1918 private ranges.
+  - id: block-private-network
+    description: Block outbound network requests to private and loopback address ranges
+    target: network
+    match: pattern
+    values:
+      - ^https?://10\.\d{1,3}\.\d{1,3}\.\d{1,3}
+      - ^https?://172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}
+      - ^https?://192\.168\.\d{1,3}\.\d{1,3}
+      - ^https?://127\.\d{1,3}\.\d{1,3}\.\d{1,3}
+      - ^https?://localhost
+      - ^https?://\[::1\]
+      - \b10\.\d{1,3}\.\d{1,3}\.\d{1,3}\b
+      - \b172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}\b
+      - \b192\.168\.\d{1,3}\.\d{1,3}\b
+      - \b127\.\d{1,3}\.\d{1,3}\.\d{1,3}\b
+    action: deny
+
+  # ── Process spawning ──
+  # Block tools that fork child processes or evaluate arbitrary code.
+  - id: block-process-execution
+    description: Block tools that spawn child processes or evaluate arbitrary code
+    target: process
+    match: pattern
+    values:
+      - \bexec\b
+      - \bspawn\b
+      - \bfork\b
+      - \bsystem\b
+      - \beval\b
+      - \bchild_process\b
+      - \bexecSync\b
+      - \bspawnSync\b
+      - \bexecFile\b
+      - \bexecFileSync\b
+    action: deny
+
+# --- Allowlist -------------------------------------------------------------
+# Tools, paths, hosts, and env vars listed here bypass all deny rules.
+# Populate this section after running `mcp-seatbelt init` to see which
+# servers were detected in your environment.
+#
+# Example:
+#   tools:
+#     - trusted-filesystem-server
+#     - company-internal-api
+#   paths:
+#     - /home/dev/projects/
+#     - /tmp/build-artifacts/
+#   hosts:
+#     - api.internal.example.com
+#   envVars:
+#     - NODE_ENV
+#     - DEBUG
+allowlist:
+  tools: []
+  paths: []
+  hosts: []
+  envVars: []

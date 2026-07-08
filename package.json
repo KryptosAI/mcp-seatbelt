@@ -1,0 +1,36 @@
+{
+  "name": "mcp-seatbelt",
+  "version": "0.1.0",
+  "description": "Runtime guardrails for AI agent MCP tools. Detect MCP configs, wrap risky servers with a policy proxy, and block dangerous tool calls at runtime.",
+  "main": "dist/index.js",
+  "bin": {
+    "mcp-seatbelt": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src/ tests/"
+  },
+  "keywords": ["mcp", "security", "agent", "ai", "guardrails", "proxy", "model-context-protocol"],
+  "type": "module",
+  "license": "MIT",
+  "dependencies": {
+    "chalk": "^5.3.0",
+    "commander": "^12.1.0",
+    "js-yaml": "^4.1.0",
+    "express": "^4.21.0",
+    "http-proxy-middleware": "^3.0.0"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.0.0"
+  }
+}
