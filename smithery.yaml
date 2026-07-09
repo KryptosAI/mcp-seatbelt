@@ -1,0 +1,7 @@
+name: "@kryptosai/mcp-seatbelt"
+description: "Runtime guardrails for AI agent MCP tools"
+command: "npx"
+args:
+  - "-y"
+  - "@kryptosai/mcp-seatbelt"
+  - "proxy"

@@ -1,0 +1,34 @@
+{
+  "name": "@kryptosai/mcp-seatbelt",
+  "description": "Runtime guardrails for AI agent MCP tools. Detects MCP configs across 8 clients, blocks dangerous tool calls with a policy proxy, and enforces security at runtime.",
+  "tools": [
+    {
+      "name": "init",
+      "description": "Detect MCP configs, assess risk, and generate a policy file"
+    },
+    {
+      "name": "proxy",
+      "description": "Start a runtime policy proxy that intercepts and enforces MCP tool calls"
+    },
+    {
+      "name": "report",
+      "description": "Generate a risk report in Markdown or SARIF format"
+    },
+    {
+      "name": "check",
+      "description": "Quickly check detected MCP configurations for risks"
+    },
+    {
+      "name": "dashboard",
+      "description": "Start a live dashboard web UI for proxy monitoring"
+    },
+    {
+      "name": "diff",
+      "description": "Compare two policy files and show differences"
+    },
+    {
+      "name": "import-observatory",
+      "description": "Import mcp-observatory scan results as policy rules"
+    }
+  ]
+}
