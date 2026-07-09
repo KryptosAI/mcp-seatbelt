@@ -58,6 +58,8 @@ export class StdioClient {
   private args: string[];
   private env: Record<string, string>;
   private stopped = false;
+  private restartCount = 0;
+  private readonly MAX_RESTARTS = 5;
   onNotification: ((notification: MCPResponse) => void) | null = null;
 
   constructor(command: string, args: string[], env?: Record<string, string>) {
@@ -72,6 +74,8 @@ export class StdioClient {
   }
 
   async start(): Promise<void> {
+    this.stopped = false;
+    this.restartCount = 0;
     this.spawnProcess();
   }
 
@@ -140,8 +144,12 @@ export class StdioClient {
     });
 
     this.child.on('exit', (code, signal) => {
-      if (!this.stopped) {
+      this.restartCount++;
+      if (!this.stopped && this.restartCount < this.MAX_RESTARTS) {
+        process.stderr.write(`[mcp-seatbelt:${this.command}] exited (code=${code}). Restart ${this.restartCount}/${this.MAX_RESTARTS}\n`);
         setTimeout(() => this.spawnProcess(), 1000);
+      } else if (!this.stopped) {
+        process.stderr.write(`[mcp-seatbelt:${this.command}] max restarts (${this.MAX_RESTARTS}) reached. Not restarting.\n`);
       }
       for (const [, pending] of this.pending) {
         clearTimeout(pending.timer);
@@ -252,6 +260,8 @@ export class SseClient {
   private streamAbort: AbortController | null = null;
   private stopped = false;
   private reconnectTimer: NodeJS.Timeout | null = null;
+  private reconnectCount = 0;
+  private readonly MAX_RECONNECTS = 5;
   private messageEndpoint: string;
   onNotification: ((notification: MCPResponse) => void) | null = null;
 
@@ -269,6 +279,7 @@ export class SseClient {
 
   async start(): Promise<void> {
     this.stopped = false;
+    this.reconnectCount = 0;
     this.connectSSE();
   }
 
@@ -340,6 +351,12 @@ export class SseClient {
 
   private scheduleReconnect(): void {
     if (this.stopped) return;
+    this.reconnectCount++;
+    if (this.reconnectCount >= this.MAX_RECONNECTS) {
+      process.stderr.write(`[mcp-seatbelt:sse] max reconnects (${this.MAX_RECONNECTS}) reached. Not reconnecting.\n`);
+      return;
+    }
+    process.stderr.write(`[mcp-seatbelt:sse] reconnecting ${this.reconnectCount}/${this.MAX_RECONNECTS}\n`);
     this.reconnectTimer = setTimeout(() => this.connectSSE(), 1000);
   }
 

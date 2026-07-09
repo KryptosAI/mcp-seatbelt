@@ -7,7 +7,7 @@ const RISK_RULES: {
   severity: RiskFlag["severity"];
 }[] = [
   {
-    check: (srv) => /^(\/.*\/)?(bash|sh|zsh|fish|pwsh|powershell|cmd|python|perl|ruby|node)$/.test(srv.command),
+    check: (srv) => /^(\/.*\/)?(bash|sh|zsh|fish|pwsh|powershell|cmd|python|perl|ruby)$/.test(srv.command),
     rule: "shell-interpreter",
     description: "Server uses a shell interpreter as its command",
     severity: "critical",
