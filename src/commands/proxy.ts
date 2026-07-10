@@ -1,16 +1,26 @@
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, watch } from "node:fs";
 import path from "node:path";
 import chalk from "chalk";
 import { parsePolicy } from "../policy/yaml.js";
 import { detectAll } from "../detectors/index.js";
 import { ProxyServer } from "../proxy/index.js";
 import { PolicyEngine } from "../policy/engine.js";
+import { AuditTrail } from "../audit.js";
+import { LLMJudge } from "../policy/llm-judge.js";
 
 export interface ProxyOptions {
   port: string;
   config: string;
   authKey?: string;
   rateLimit?: string;
+  auditFile?: string;
+  auditSecret?: string;
+  judge?: boolean;
+  judgeModel?: string;
+  judgeKey?: string;
+  dlp?: boolean;
+  watch?: boolean;
+  stats?: boolean;
 }
 
 export async function proxyCommand(opts: ProxyOptions): Promise<void> {
@@ -26,6 +36,22 @@ export async function proxyCommand(opts: ProxyOptions): Promise<void> {
   const policyConfig = parsePolicy(raw);
   const policy = new PolicyEngine(policyConfig);
 
+  if (opts.judge) {
+    const judge = new LLMJudge({
+      provider: opts.judgeKey ? (process.env.MCP_SEATBELT_JUDGE_PROVIDER as "openai" | "anthropic" | undefined) || "openai" : "local",
+      model: opts.judgeModel,
+      apiKey: opts.judgeKey || process.env.OPENAI_API_KEY || process.env.ANTHROPIC_API_KEY,
+    });
+    policy.setJudge(judge);
+  }
+
+  const auditSecret = opts.auditSecret || process.env.SEATBELT_AUDIT_SECRET;
+  if (opts.auditFile && auditSecret) {
+    const trail = new AuditTrail(opts.auditFile, auditSecret);
+    policy.setAuditTrail(trail);
+    console.log(chalk.dim(`Audit trail: ${opts.auditFile}`));
+  }
+
   console.log(chalk.cyan("\n🔐 MCP Seatbelt Proxy"));
   console.log(chalk.dim(`Mode: ${policyConfig.mode} | Port: ${opts.port}`));
   if (opts.authKey) {
@@ -33,6 +59,15 @@ export async function proxyCommand(opts: ProxyOptions): Promise<void> {
   }
   if (opts.rateLimit) {
     console.log(chalk.dim(`Rate limit: ${opts.rateLimit} req/min`));
+  }
+  if (opts.judge) {
+    console.log(chalk.dim(`LLM judge: enabled (${opts.judgeKey ? 'API mode' : 'heuristic mode'})`));
+  }
+  if (opts.watch) {
+    console.log(chalk.dim(`Hot reload: enabled`));
+  }
+  if (opts.stats) {
+    console.log(chalk.dim(`Stats: enabled (every 5s)`));
   }
   console.log();
 
@@ -53,6 +88,7 @@ export async function proxyCommand(opts: ProxyOptions): Promise<void> {
   const proxy = new ProxyServer(policy, parseInt(opts.port, 10), {
     apiKey: opts.authKey,
     rateLimit: rateLimitNum,
+    dlp: opts.dlp ?? true,
   });
 
   for (const config of configs) {
@@ -95,12 +131,64 @@ export async function proxyCommand(opts: ProxyOptions): Promise<void> {
   console.log();
   console.log(chalk.green(`Proxy running on port ${opts.port}. Press Ctrl+C to stop.\n`));
 
+  let watcher: ReturnType<typeof watch> | null = null;
+  let statsInterval: ReturnType<typeof setInterval> | null = null;
+  let reloadGate = false;
+
+  const reloadPolicy = () => {
+    if (reloadGate) return;
+    reloadGate = true;
+
+    try {
+      setTimeout(() => { reloadGate = false; }, 500);
+
+      const rawReload = readFileSync(configPath, "utf-8");
+      const newConfig = parsePolicy(rawReload);
+      const ruleCount = proxy.reloadPolicy(newConfig);
+      console.log(chalk.cyan(`[mcp-seatbelt] Policy reloaded (${ruleCount} rules)`));
+    } catch (err) {
+      reloadGate = false;
+      console.error(chalk.red(`[mcp-seatbelt] Policy reload failed: ${err instanceof Error ? err.message : String(err)}`));
+    }
+  };
+
+  if (opts.watch) {
+    watcher = watch(configPath, (eventType) => {
+      if (eventType === "change") {
+        reloadPolicy();
+      }
+    });
+  }
+
+  if (opts.stats) {
+    statsInterval = setInterval(() => {
+      const s = proxy.getStats();
+      const lat = proxy.getLatencyStats();
+      const serverCount = proxy.getServers().length;
+      const now = new Date().toTimeString().slice(0, 8);
+      console.log(
+        `[${now}] proxying ${serverCount} servers | ${lat.throughput} req/s | p50=${lat.p50}ms p95=${lat.p95}ms | ${s.blocked} blocked | ${s.warned} warned`,
+      );
+    }, 5000);
+  }
+
   const shutdown = () => {
     console.log(chalk.dim("\nShutting down proxy..."));
+    if (watcher) { watcher.close(); }
+    if (statsInterval) { clearInterval(statsInterval); }
     proxy.stop();
     process.exit(0);
   };
 
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
+
+  process.on("SIGUSR1", () => {
+    console.log(chalk.dim("[mcp-seatbelt] SIGUSR1 received — reloading policy"));
+    reloadPolicy();
+  });
+  process.on("SIGHUP", () => {
+    console.log(chalk.dim("[mcp-seatbelt] SIGHUP received — reloading policy"));
+    reloadPolicy();
+  });
 }

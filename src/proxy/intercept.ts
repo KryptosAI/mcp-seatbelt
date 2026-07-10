@@ -1,4 +1,16 @@
 import type { PolicyEngine, EvaluateContext } from '../policy/engine.js';
+import { notifyPolicyEvent } from './notifications.js';
+
+export interface RedactionLog {
+  type: string;
+  path: string;
+}
+
+export interface ScanResult {
+  response: MCPResponse;
+  redactedCount: number;
+  redactions: RedactionLog[];
+}
 
 export interface MCPRequest {
   jsonrpc: string;
@@ -54,6 +66,17 @@ export function interceptRequest(
 
     const result = policy.evaluate(toolName, toolDescription ?? '', request.params?.arguments ?? {}, context);
 
+    if (result.action === 'deny' || result.action === 'warn' || result.action === 'redact') {
+      notifyPolicyEvent(policy.getConfig(), {
+        server: serverName,
+        tool: toolName,
+        args: request.params?.arguments ?? {},
+        reasons: result.reasons,
+        action: result.action,
+        timestamp: new Date().toISOString(),
+      });
+    }
+
     if (result.action === 'deny') {
       const reason = result.reasons.join('; ');
       return {
@@ -61,6 +84,7 @@ export function interceptRequest(
         error: {
           code: -32001,
           message: 'Blocked by MCP Seatbelt: ' + reason,
+          data: { reasons: result.reasons },
         },
         id: request.id ?? undefined,
       };
@@ -99,6 +123,17 @@ export function interceptRequest(
 
     const result = policy.evaluate(uri, '', request.params ?? {}, context);
 
+    if (result.action === 'deny' || result.action === 'warn' || result.action === 'redact') {
+      notifyPolicyEvent(policy.getConfig(), {
+        server: serverName,
+        tool: `resources/read:${uri}`,
+        args: request.params ?? {},
+        reasons: result.reasons,
+        action: result.action,
+        timestamp: new Date().toISOString(),
+      });
+    }
+
     if (result.action === 'deny') {
       const reason = result.reasons.join('; ');
       return {
@@ -106,6 +141,7 @@ export function interceptRequest(
         error: {
           code: -32001,
           message: 'Blocked by MCP Seatbelt: ' + reason,
+          data: { reasons: result.reasons },
         },
         id: request.id ?? undefined,
       };
@@ -135,6 +171,17 @@ export function interceptRequest(
 
     const result = policy.evaluate(uri, '', request.params ?? {}, context);
 
+    if (result.action === 'deny' || result.action === 'warn' || result.action === 'redact') {
+      notifyPolicyEvent(policy.getConfig(), {
+        server: serverName,
+        tool: `resources/subscribe:${uri}`,
+        args: request.params ?? {},
+        reasons: result.reasons,
+        action: result.action,
+        timestamp: new Date().toISOString(),
+      });
+    }
+
     if (result.action === 'deny') {
       const reason = result.reasons.join('; ');
       return {
@@ -142,6 +189,7 @@ export function interceptRequest(
         error: {
           code: -32001,
           message: 'Blocked by MCP Seatbelt: ' + reason,
+          data: { reasons: result.reasons },
         },
         id: request.id ?? undefined,
       };
@@ -171,6 +219,17 @@ export function interceptRequest(
 
     const result = policy.evaluate(promptName, '', request.params ?? {}, context);
 
+    if (result.action === 'deny' || result.action === 'warn' || result.action === 'redact') {
+      notifyPolicyEvent(policy.getConfig(), {
+        server: serverName,
+        tool: `prompts/get:${promptName}`,
+        args: request.params ?? {},
+        reasons: result.reasons,
+        action: result.action,
+        timestamp: new Date().toISOString(),
+      });
+    }
+
     if (result.action === 'deny') {
       const reason = result.reasons.join('; ');
       return {
@@ -178,6 +237,7 @@ export function interceptRequest(
         error: {
           code: -32001,
           message: 'Blocked by MCP Seatbelt: ' + reason,
+          data: { reasons: result.reasons },
         },
         id: request.id ?? undefined,
       };
@@ -403,5 +463,76 @@ export function filterPromptsListResponse(
       ...result,
       prompts: filteredPrompts,
     },
+  };
+}
+
+const SECRET_PATTERNS: Array<{ type: string; pattern: RegExp }> = [
+  { type: 'aws-access-key', pattern: /AKIA[0-9A-Z]{16}/g },
+  { type: 'github-token', pattern: /ghp_[0-9a-zA-Z]{36}/g },
+  { type: 'openai-key', pattern: /sk-[a-zA-Z0-9]{32,}/g },
+  { type: 'private-key', pattern: /-----BEGIN (?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----[\s\S]*?-----END (?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----/g },
+  { type: 'api-key', pattern: /(?:api[_-]?key|apikey|api[_-]?secret|auth[_-]?token|bearer)\s*[:=]\s*['"]?([a-zA-Z0-9._\-]{20,})['"]?/gi },
+  { type: 'generic-secret', pattern: /(?:(?:secret|password|token|key|credential)[\s:=]+['"][^'"]+['"])/gi },
+];
+
+function deepScanStrings(obj: unknown, path: string, callback: (path: string, value: string) => string | undefined): unknown {
+  if (typeof obj === 'string') {
+    const result = callback(path, obj);
+    if (result !== undefined) return result;
+    return obj;
+  }
+
+  if (Array.isArray(obj)) {
+    let changed = false;
+    const result = obj.map((item, i) => {
+      const newVal = deepScanStrings(item, `${path}[${i}]`, callback);
+      if (newVal !== item) changed = true;
+      return newVal;
+    });
+    return changed ? result : obj;
+  }
+
+  if (obj && typeof obj === 'object') {
+    let changed = false;
+    const result: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(obj as Record<string, unknown>)) {
+      const newVal = deepScanStrings(value, path ? `${path}.${key}` : key, callback);
+      if (newVal !== value) changed = true;
+      (result as Record<string, unknown>)[key] = newVal;
+    }
+    return changed ? result : obj;
+  }
+
+  return obj;
+}
+
+export function scanResponse(
+  response: MCPResponse,
+  _policy: PolicyEngine,
+): ScanResult {
+  const redactions: RedactionLog[] = [];
+
+  const redact = (path: string, value: string): string | undefined => {
+    let modified = value;
+    for (const { type, pattern } of SECRET_PATTERNS) {
+      const newPattern = new RegExp(pattern.source, pattern.flags);
+      const matches = modified.match(newPattern);
+      if (matches) {
+        modified = modified.replace(newPattern, `[REDACTED-${type}]`);
+        for (const _match of matches) {
+          redactions.push({ type, path });
+        }
+      }
+    }
+    if (modified !== value) return modified;
+    return undefined;
+  };
+
+  const sanitized = deepScanStrings(response, '', redact) as MCPResponse;
+
+  return {
+    response: sanitized,
+    redactedCount: redactions.length,
+    redactions,
   };
 }

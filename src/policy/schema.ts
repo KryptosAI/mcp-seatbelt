@@ -66,6 +66,8 @@ export function validatePolicy(config: unknown): PolicyConfig {
     throw new Error('Policy allowlist.envVars must contain only strings');
   }
 
+  const notifications = validateNotifications(obj.notifications);
+
   return {
     version: obj.version,
     mode: obj.mode as PolicyConfig['mode'],
@@ -78,7 +80,47 @@ export function validatePolicy(config: unknown): PolicyConfig {
       envVars: allowlist.envVars as string[],
     },
     allowSampling: typeof obj.allowSampling === 'boolean' ? obj.allowSampling : true,
+    ...(notifications ? { notifications } : {}),
   };
+}
+
+function validateNotifications(input: unknown): PolicyConfig['notifications'] | undefined {
+  if (input === undefined || input === null) return undefined;
+  if (typeof input !== 'object') {
+    throw new Error('Policy notifications must be a non-null object or absent');
+  }
+  const n = input as Record<string, unknown>;
+  if (n.webhooks === undefined || n.webhooks === null) return { webhooks: undefined };
+  if (!Array.isArray(n.webhooks)) {
+    throw new Error('Policy notifications.webhooks must be an array');
+  }
+  const webhooks = n.webhooks.map((wh, i) => {
+    if (!wh || typeof wh !== 'object') {
+      throw new Error(`Policy notifications.webhooks[${i}] must be a non-null object`);
+    }
+    const w = wh as Record<string, unknown>;
+    if (typeof w.url !== 'string' || w.url.trim() === '') {
+      throw new Error(`Policy notifications.webhooks[${i}].url must be a non-empty string`);
+    }
+    if (!Array.isArray(w.events)) {
+      throw new Error(`Policy notifications.webhooks[${i}].events must be an array`);
+    }
+    const validEvents = ['deny' as const, 'warn' as const, 'redact' as const];
+    for (const evt of w.events) {
+      if (!validEvents.includes(evt as typeof validEvents[number])) {
+        throw new Error(`Policy notifications.webhooks[${i}].events must contain only "deny", "warn", or "redact"; got ${JSON.stringify(evt)}`);
+      }
+    }
+    if (w.format !== undefined && !['slack', 'discord', 'json'].includes(w.format as string)) {
+      throw new Error(`Policy notifications.webhooks[${i}].format must be "slack", "discord", or "json"; got ${JSON.stringify(w.format)}`);
+    }
+    return {
+      url: w.url as string,
+      events: w.events as Array<"deny" | "warn" | "redact">,
+      format: w.format as "slack" | "discord" | "json" | undefined,
+    };
+  });
+  return { webhooks };
 }
 
 function validateRule(rule: unknown, index: number): asserts rule is PolicyRule {
@@ -167,6 +209,30 @@ function validateRule(rule: unknown, index: number): asserts rule is PolicyRule 
     if (cc.maxRequestsPerMinute !== undefined) {
       if (typeof cc.maxRequestsPerMinute !== 'number' || cc.maxRequestsPerMinute <= 0 || !Number.isInteger(cc.maxRequestsPerMinute)) {
         throw new Error(`Policy rule[${index}].contextCondition.maxRequestsPerMinute must be a positive integer`);
+      }
+    }
+  }
+
+  if (r.argConstraints !== undefined && r.argConstraints !== null) {
+    if (!Array.isArray(r.argConstraints)) {
+      throw new Error(`Policy rule[${index}].argConstraints must be an array`);
+    }
+    const VALID_CONSTRAINTS = ['equals', 'startsWith', 'regex', 'in', 'notIn'];
+    for (let ci = 0; ci < r.argConstraints.length; ci++) {
+      const ac = (r.argConstraints as Array<Record<string, unknown>>)[ci];
+      if (!ac || typeof ac !== 'object') {
+        throw new Error(`Policy rule[${index}].argConstraints[${ci}] must be a non-null object`);
+      }
+      if (typeof ac.argName !== 'string' || ac.argName.trim() === '') {
+        throw new Error(`Policy rule[${index}].argConstraints[${ci}].argName must be a non-empty string`);
+      }
+      if (!VALID_CONSTRAINTS.includes(ac.constraint as string)) {
+        throw new Error(
+          `Policy rule[${index}].argConstraints[${ci}].constraint must be one of ${VALID_CONSTRAINTS.join(', ')}, got ${JSON.stringify(ac.constraint)}`,
+        );
+      }
+      if (!Array.isArray(ac.values) || !ac.values.every((v: unknown) => typeof v === 'string' && v.trim() !== '')) {
+        throw new Error(`Policy rule[${index}].argConstraints[${ci}].values must contain only non-empty strings`);
       }
     }
   }

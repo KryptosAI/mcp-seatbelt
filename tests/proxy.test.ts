@@ -5,8 +5,9 @@ import {
   filterToolsListResponse,
   filterResourcesListResponse,
   filterPromptsListResponse,
+  scanResponse,
 } from '../src/proxy/intercept.js';
-import type { MCPRequest, MCPResponse } from '../src/proxy/intercept.js';
+import type { MCPRequest, MCPResponse, ScanResult } from '../src/proxy/intercept.js';
 import type { PolicyConfig, PolicyRule } from '../src/types.js';
 
 function makeEnforceConfig(rules: PolicyRule[] = []): PolicyConfig {
@@ -1017,5 +1018,154 @@ describe('filterPromptsListResponse', () => {
     const prompts = (filtered.result as Record<string, unknown>).prompts as Array<Record<string, unknown>>;
     expect(prompts).toHaveLength(1);
     expect(prompts[0].name).toBe('utility');
+  });
+});
+
+describe('scanResponse (DLP)', () => {
+  function makePolicy() {
+    return new PolicyEngine(makeAllowConfig([]));
+  }
+
+  it('passes through clean response without redactions', () => {
+    const response: MCPResponse = {
+      jsonrpc: '2.0',
+      result: {
+        content: [{ type: 'text', text: 'Hello, world!' }],
+      },
+      id: 1,
+    };
+    const result = scanResponse(response, makePolicy());
+    expect(result.redactedCount).toBe(0);
+    expect(result.redactions).toHaveLength(0);
+    expect(result.response).toEqual(response);
+  });
+
+  it('redacts AWS access keys', () => {
+    const response: MCPResponse = {
+      jsonrpc: '2.0',
+      result: {
+        content: [{ type: 'text', text: 'aws_key=AKIA1234567890ABCDEF' }],
+      },
+      id: 1,
+    };
+    const result = scanResponse(response, makePolicy());
+    expect(result.redactedCount).toBeGreaterThan(0);
+    expect(result.redactions.some((r) => r.type === 'aws-access-key')).toBe(true);
+    const text = (result.response.result as Record<string, unknown>).content as Array<Record<string, unknown>>;
+    expect(text[0].text).toContain('[REDACTED-aws-access-key]');
+  });
+
+  it('redacts GitHub tokens', () => {
+    const response: MCPResponse = {
+      jsonrpc: '2.0',
+      result: {
+        content: [{ type: 'text', text: 'token=ghp_abcdefghijklmnopqrstuvwxyz0123456789' }],
+      },
+      id: 1,
+    };
+    const scanResult = scanResponse(response, makePolicy());
+    expect(scanResult.redactedCount).toBeGreaterThan(0);
+    expect(scanResult.redactions.some((r) => r.type === 'github-token')).toBe(true);
+    const text = (scanResult.response.result as Record<string, unknown>).content as Array<Record<string, unknown>>;
+    expect(text[0].text).toContain('[REDACTED-github-token]');
+  });
+
+  it('redacts OpenAI keys', () => {
+    const response: MCPResponse = {
+      jsonrpc: '2.0',
+      result: {
+        content: [{ type: 'text', text: 'OPENAI_API_KEY=sk-abcdefghijklmnopqrstuvwxyz123456' }],
+      },
+      id: 1,
+    };
+    const result = scanResponse(response, makePolicy());
+    expect(result.redactedCount).toBeGreaterThan(0);
+    expect(result.redactions.some((r) => r.type === 'openai-key')).toBe(true);
+  });
+
+  it('redacts private key blocks', () => {
+    const response: MCPResponse = {
+      jsonrpc: '2.0',
+      result: {
+        content: [{ type: 'text', text: 'key=-----BEGIN PRIVATE KEY-----\nMIIC...\n-----END PRIVATE KEY-----' }],
+      },
+      id: 1,
+    };
+    const result = scanResponse(response, makePolicy());
+    expect(result.redactedCount).toBeGreaterThan(0);
+    expect(result.redactions.some((r) => r.type === 'private-key')).toBe(true);
+  });
+
+  it('redacts generic secret patterns', () => {
+    const response: MCPResponse = {
+      jsonrpc: '2.0',
+      result: {
+        content: [{ type: 'text', text: 'password: "supersecret123"' }],
+      },
+      id: 1,
+    };
+    const result = scanResponse(response, makePolicy());
+    expect(result.redactedCount).toBeGreaterThan(0);
+    expect(result.redactions.some((r) => r.type === 'generic-secret')).toBe(true);
+  });
+
+  it('redacts API key patterns', () => {
+    const response: MCPResponse = {
+      jsonrpc: '2.0',
+      result: {
+        content: [{ type: 'text', text: 'api_key = "abcdefghijklmnopqrstuvwx"' }],
+      },
+      id: 1,
+    };
+    const result = scanResponse(response, makePolicy());
+    expect(result.redactedCount).toBeGreaterThan(0);
+    expect(result.redactions.some((r) => r.type === 'api-key')).toBe(true);
+  });
+
+  it('does NOT redact clean text', () => {
+    const response: MCPResponse = {
+      jsonrpc: '2.0',
+      result: {
+        content: [{ type: 'text', text: 'The result is 42. Have a nice day!' }],
+      },
+      id: 1,
+    };
+    const result = scanResponse(response, makePolicy());
+    expect(result.redactedCount).toBe(0);
+  });
+
+  it('handles response with error (no result)', () => {
+    const response: MCPResponse = {
+      jsonrpc: '2.0',
+      error: { code: -32603, message: 'Internal error' },
+      id: 1,
+    };
+    const result = scanResponse(response, makePolicy());
+    expect(result.redactedCount).toBe(0);
+    expect(result.response).toEqual(response);
+  });
+
+  it('handles null response gracefully', () => {
+    const response: MCPResponse = {
+      jsonrpc: '2.0',
+      result: null,
+      id: 1,
+    };
+    const result = scanResponse(response, makePolicy());
+    expect(result.redactedCount).toBe(0);
+  });
+
+  it('redaction paths are logged correctly', () => {
+    const response: MCPResponse = {
+      jsonrpc: '2.0',
+      result: {
+        content: [{ type: 'text', text: 'aws_key=AKIA1234567890ABCDEF' }],
+      },
+      id: 1,
+    };
+    const result = scanResponse(response, makePolicy());
+    expect(result.redactions.length).toBeGreaterThan(0);
+    expect(result.redactions[0].path).toContain('content');
+    expect(result.redactions[0].type).toBe('aws-access-key');
   });
 });

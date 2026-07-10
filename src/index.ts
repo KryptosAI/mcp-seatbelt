@@ -38,13 +38,32 @@ program
   .option("-c, --config <path>", "Policy config path", ".mcp-seatbelt/policy.yml")
   .option("--auth-key <key>", "Require API key via Authorization: Bearer <key>")
   .option("--rate-limit <n>", "Max requests per minute per client IP", "100")
+  .option("--audit-file <path>", "Path for signed audit log", ".mcp-seatbelt/audit.jsonl")
+  .option("--audit-secret <secret>", "Secret for audit log HMAC (or SEATBELT_AUDIT_SECRET env)")
+  .option("--judge", "Enable LLM-as-judge semantic analysis (default: heuristic, no API needed)")
+  .option("--judge-model <model>", "LLM model for judge API calls")
+  .option("--judge-key <key>", "API key for judge (or set OPENAI_API_KEY / ANTHROPIC_API_KEY)")
+  .option("--dlp", "Enable DLP response scanning (default: true)")
+  .option("--no-dlp", "Disable DLP response scanning")
+  .option("--watch", "Enable hot reload via file watcher + SIGHUP (default: true when not in CI)")
+  .option("--no-watch", "Disable hot reload")
+  .option("--stats", "Periodically print proxy stats to stdout")
   .action(async (opts) => {
     const { proxyCommand } = await import("./commands/proxy.js");
+    const isCI = process.env.CI !== undefined;
     await proxyCommand({
       port: opts.port as string,
       config: opts.config as string,
       authKey: opts.authKey as string | undefined,
       rateLimit: opts.rateLimit as string | undefined,
+      auditFile: opts.auditFile as string | undefined,
+      auditSecret: opts.auditSecret as string | undefined,
+      judge: Boolean(opts.judge),
+      judgeModel: opts.judgeModel as string | undefined,
+      judgeKey: opts.judgeKey as string | undefined,
+      dlp: (opts.dlp as boolean | undefined) ?? true,
+      watch: opts.watch !== undefined ? opts.watch : !isCI,
+      stats: Boolean(opts.stats),
     });
   });
 
@@ -85,9 +104,13 @@ program
   .command("dashboard")
   .description("Start a live dashboard web UI at http://localhost:9421")
   .option("-p, --port <port>", "Dashboard port", "9421")
+  .option("--policy <path>", "Path to policy YAML file for simulate endpoint")
   .action(async (opts) => {
     const { dashboardCommand } = await import("./commands/dashboard.js");
-    await dashboardCommand({ port: opts.port as string });
+    await dashboardCommand({
+      port: opts.port as string,
+      policyPath: opts.policy as string | undefined,
+    });
   });
 
 program
@@ -103,14 +126,100 @@ program
     });
   });
 
+program
+  .command("baseline")
+  .description("Generate a behavioral baseline report from audit log observations")
+  .option("--audit-file <path>", "Path to audit log JSON file")
+  .action(async (opts) => {
+    const { baselineCommand } = await import("./commands/baseline.js");
+    await baselineCommand({
+      auditFile: opts.auditFile as string | undefined,
+    });
+  });
+
+program
+  .command("verify-audit")
+  .description("Verify a signed audit log file")
+  .argument("<path>", "Path to audit log file (.audit.jsonl)")
+  .requiredOption("--secret <secret>", "HMAC secret (or SEATBELT_AUDIT_SECRET env)")
+  .action(async (auditPath: string, opts) => {
+    const { verifyAuditFile } = await import("./audit.js");
+    const secret = opts.secret as string || process.env.SEATBELT_AUDIT_SECRET;
+    if (!secret) {
+      console.error("Error: --secret is required or set SEATBELT_AUDIT_SECRET env var");
+      process.exit(1);
+    }
+    const result = await verifyAuditFile(auditPath, secret);
+    console.log(`Verified ${result.total.toLocaleString()} entries. ${result.tampered} tampered.`);
+    if (result.tampered > 0) {
+      process.exit(1);
+    }
+  });
+
+program
+  .command("benchmark")
+  .description("Run performance benchmarks against the proxy")
+  .option("-p, --port <port>", "Proxy port", "9420")
+  .option("-n, --requests <n>", "Number of requests to send", "1000")
+  .option("-c, --concurrency <n>", "Number of concurrent requests", "10")
+  .option("--warmup <n>", "Number of warmup requests before measuring", "100")
+  .action(async (opts) => {
+    const { benchmarkCommand } = await import("./commands/benchmark.js");
+    await benchmarkCommand({
+      port: opts.port as string,
+      requests: parseInt(opts.requests, 10),
+      concurrency: parseInt(opts.concurrency, 10),
+      warmup: parseInt(opts.warmup, 10),
+    });
+  });
+
+program
+  .command("simulate")
+  .description("Simulate a tool call against the policy and show evaluation trace")
+  .requiredOption("--tool <name>", "Tool name to simulate")
+  .option("--description <text>", "Tool description")
+  .option("--args <json>", "Tool arguments as JSON string", "{}")
+  .option("--server <name>", "Server/client name", "simulate")
+  .requiredOption("--policy <path>", "Path to policy YAML file")
+  .option("--json", "Output machine-readable JSON")
+  .option("--verbose", "Show all rules evaluated, not just matching ones")
+  .action(async (opts) => {
+    const { simulateCommand } = await import("./commands/simulate.js");
+    await simulateCommand({
+      tool: opts.tool as string,
+      description: opts.description as string | undefined,
+      args: opts.args as string,
+      server: opts.server as string,
+      policy: opts.policy as string,
+      json: Boolean(opts.json),
+      verbose: Boolean(opts.verbose),
+    });
+  });
+
+program
+  .command("test-policy")
+  .description("Run policy tests from a test YAML file")
+  .argument("<test-file>", "Path to test YAML file")
+  .option("--policy <path>", "Path to policy YAML file (uses default if omitted)")
+  .action(async (testFile: string, opts) => {
+    const { testPolicyCommand } = await import("./commands/test-policy.js");
+    await testPolicyCommand({
+      testFile,
+      policy: opts.policy as string | undefined,
+    });
+  });
+
 program.parse();
 
-export { ProxyServer, interceptRequest, filterToolsListResponse, filterResourcesListResponse, filterPromptsListResponse, SseClient } from './proxy/index.js';
-export type { RegisteredServer, MCPRequest, MCPResponse } from './proxy/index.js';
-export { PolicyEngine } from './policy/engine.js';
-export type { EvaluateContext } from './policy/engine.js';
+export { ProxyServer, interceptRequest, filterToolsListResponse, filterResourcesListResponse, filterPromptsListResponse, scanResponse, SseClient } from './proxy/index.js';
+export type { RegisteredServer, MCPRequest, MCPResponse, RedactionLog, ScanResult } from './proxy/index.js';
+export { PolicyEngine, BehavioralBaseline } from './policy/engine.js';
+export type { EvaluateContext, Deviation, ToolProfile } from './policy/engine.js';
+export { LLMJudge } from './policy/llm-judge.js';
+export type { JudgeConfig, JudgeResult } from './policy/llm-judge.js';
 export { validatePolicy } from './policy/schema.js';
 export { DEFAULT_POLICY, DEFAULT_TEMPLATES, generateDefaultPolicy, generateDefaultPolicyFile } from './policy/defaults.js';
 export { detectAll, parseMcpServers } from './detectors/index.js';
 export { assessRisk } from './detectors/risk.js';
+export { AuditTrail } from './audit.js';
 export * from './types.js';

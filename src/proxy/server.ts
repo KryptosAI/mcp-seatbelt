@@ -2,7 +2,7 @@ import express, { type Request, type Response } from 'express';
 import { type ChildProcess, spawn } from 'child_process';
 import { createInterface } from 'readline';
 import type http from 'http';
-import type { PolicyEngine } from '../policy/engine.js';
+import { PolicyEngine } from '../policy/engine.js';
 import {
   type MCPRequest,
   type MCPResponse,
@@ -10,8 +10,9 @@ import {
   filterToolsListResponse,
   filterResourcesListResponse,
   filterPromptsListResponse,
+  scanResponse,
 } from './intercept.js';
-import type { McpServerConfig, ProxyStats } from '../types.js';
+import type { McpServerConfig, PolicyConfig, ProxyStats } from '../types.js';
 
 export interface RegisteredServer {
   name: string;
@@ -23,6 +24,17 @@ export interface RegisteredServer {
 export interface ProxyServerOptions {
   apiKey?: string;
   rateLimit?: number;
+  dlp?: boolean;
+}
+
+export interface LatencyStats {
+  p50: number;
+  p95: number;
+  p99: number;
+  avg: number;
+  max: number;
+  count: number;
+  throughput: number;
 }
 
 interface ServerRegistration {
@@ -491,6 +503,7 @@ export class ProxyServer {
   private apiKey: string | null;
   private rateLimitMax: number;
   private rateLimitWindow: number = 60000;
+  private dlp: boolean;
   private rateLimits: Map<string, RateLimitEntry> = new Map();
   private circuits: Map<string, CircuitBreakerState> = new Map();
   private readonly CIRCUIT_THRESHOLD = 5;
@@ -498,11 +511,17 @@ export class ProxyServer {
 
   private toolDescriptions: Map<string, string> = new Map();
 
+  private latencies: number[] = [];
+  private readonly MAX_LATENCY_SAMPLES = 10000;
+  private requestTimestamps: number[] = [];
+  private readonly THROUGHPUT_WINDOW_MS = 5000;
+
   constructor(policy: PolicyEngine, port: number = 9420, options?: ProxyServerOptions) {
     this.policy = policy;
     this.port = port;
     this.apiKey = options?.apiKey ?? null;
     this.rateLimitMax = options?.rateLimit ?? 100;
+    this.dlp = options?.dlp ?? true;
 
     this.app = express();
     this.app.use(express.json({ limit: '5mb' }));
@@ -513,6 +532,7 @@ export class ProxyServer {
       allowed: 0,
       warned: 0,
       redacted: 0,
+      redactedCount: 0,
       startTime: '',
       uptime: 0,
     };
@@ -520,6 +540,57 @@ export class ProxyServer {
     this.setupRoutes();
 
     setInterval(() => this.cleanupRateLimits(), 60000);
+  }
+
+  reloadPolicy(newPolicyConfig: PolicyConfig): number {
+    this.policy = new PolicyEngine(newPolicyConfig);
+    return newPolicyConfig.rules.length;
+  }
+
+  getLatencyStats(): LatencyStats {
+    const sorted = [...this.latencies].sort((a, b) => a - b);
+    const count = sorted.length;
+
+    if (count === 0) {
+      return { p50: 0, p95: 0, p99: 0, avg: 0, max: 0, count: 0, throughput: 0 };
+    }
+
+    const p50 = sorted[Math.floor(count * 0.5)];
+    const p95 = sorted[Math.floor(count * 0.95)];
+    const p99 = sorted[Math.floor(count * 0.99)];
+    const avg = sorted.reduce((sum, v) => sum + v, 0) / count;
+    const max = sorted[count - 1];
+
+    const now = Date.now();
+    const cutoff = now - this.THROUGHPUT_WINDOW_MS;
+    const recent = this.requestTimestamps.filter((t) => t > cutoff);
+    const throughput = recent.length / (this.THROUGHPUT_WINDOW_MS / 1000);
+
+    return {
+      p50: parseFloat((p50 / 1_000_000).toFixed(2)),
+      p95: parseFloat((p95 / 1_000_000).toFixed(2)),
+      p99: parseFloat((p99 / 1_000_000).toFixed(2)),
+      avg: parseFloat((avg / 1_000_000).toFixed(2)),
+      max: parseFloat((max / 1_000_000).toFixed(2)),
+      count,
+      throughput: parseFloat(throughput.toFixed(1)),
+    };
+  }
+
+  private recordRequestTiming(startNs: bigint): void {
+    const endNs = process.hrtime.bigint();
+    const latencyNs = Number(endNs - startNs);
+
+    this.latencies.push(latencyNs);
+    if (this.latencies.length > this.MAX_LATENCY_SAMPLES) {
+      this.latencies.shift();
+    }
+
+    this.requestTimestamps.push(Date.now());
+    const cutoff = Date.now() - this.THROUGHPUT_WINDOW_MS;
+    while (this.requestTimestamps.length > 0 && this.requestTimestamps[0] <= cutoff) {
+      this.requestTimestamps.shift();
+    }
   }
 
   register(server: McpServerConfig, _client: string): void {
@@ -708,10 +779,17 @@ export class ProxyServer {
 
   private setupRoutes(): void {
     this.app.get('/health', (_req: Request, res: Response) => {
-      res.json({ status: 'ok', stats: this.getStats() });
+      res.json({
+        status: 'ok',
+        stats: this.getStats(),
+        latency: this.getLatencyStats(),
+      });
     });
 
     this.app.post('/:serverName', async (req: Request, res: Response) => {
+      const startNs = process.hrtime.bigint();
+      res.on('finish', () => this.recordRequestTiming(startNs));
+
       if (this.apiKey) {
         const authHeader = req.headers['authorization'];
         if (!authHeader || !authHeader.startsWith('Bearer ') || authHeader.slice(7) !== this.apiKey) {
@@ -800,6 +878,21 @@ export class ProxyServer {
       );
       if (blockedResponse) {
         this.stats.blocked++;
+        const reason = blockedResponse.error?.data && typeof blockedResponse.error.data === 'object'
+          ? ((blockedResponse.error.data as Record<string, unknown>).reasons as string[] || []).join('; ')
+          : (blockedResponse.error?.message || '');
+        (async () => {
+          try {
+            const { addBlockedCall } = await import('../commands/dashboard.js');
+            addBlockedCall(
+              mcpRequest.method === 'tools/call' && mcpRequest.params?.name
+                ? mcpRequest.params.name
+                : mcpRequest.method,
+              serverName,
+              reason,
+            );
+          } catch {}
+        })();
         res.json(blockedResponse);
         return;
       }
@@ -828,9 +921,24 @@ export class ProxyServer {
           return;
         }
 
+        let finalResponse = upstreamResponse;
+
+        if (this.dlp) {
+          const scanResult = scanResponse(upstreamResponse, this.policy);
+          finalResponse = scanResult.response;
+          if (scanResult.redactedCount > 0) {
+            this.stats.redactedCount += scanResult.redactedCount;
+            for (const redaction of scanResult.redactions) {
+              console.warn(
+                `[mcp-seatbelt:dlp] Redacted [${redaction.type}] at ${redaction.path}`,
+              );
+            }
+          }
+        }
+
         if (mcpRequest.method === 'tools/list') {
           const filtered = filterToolsListResponse(
-            upstreamResponse,
+            finalResponse,
             this.policy,
             serverName,
           );
@@ -838,7 +946,7 @@ export class ProxyServer {
           res.json(filtered);
         } else if (mcpRequest.method === 'resources/list') {
           const filtered = filterResourcesListResponse(
-            upstreamResponse,
+            finalResponse,
             this.policy,
             serverName,
           );
@@ -846,7 +954,7 @@ export class ProxyServer {
           res.json(filtered);
         } else if (mcpRequest.method === 'prompts/list') {
           const filtered = filterPromptsListResponse(
-            upstreamResponse,
+            finalResponse,
             this.policy,
             serverName,
           );
@@ -868,7 +976,7 @@ export class ProxyServer {
             }
           }
           this.stats.allowed++;
-          res.json(upstreamResponse);
+          res.json(finalResponse);
         }
       } catch (error) {
         this.recordFailure(serverName);
@@ -892,6 +1000,57 @@ export class ProxyServer {
       res.json({
         name: serverName,
         proxyUrl: this.getProxyUrl(serverName),
+      });
+    });
+
+    this.app.post('/:serverName/explain', (req: Request, res: Response) => {
+      const { serverName } = req.params;
+      if (!this.servers.has(serverName)) {
+        res.status(404).json({ error: `Unknown server: ${serverName}` });
+        return;
+      }
+
+      const body = req.body as Record<string, unknown>;
+      const toolName = (body.tool as string) || '';
+      const toolDescription = (body.description as string) || '';
+      const args = (body.args as Record<string, unknown>) || {};
+
+      if (!toolName) {
+        res.status(400).json({ error: 'Missing tool name in request body' });
+        return;
+      }
+
+      const evalResult = this.policy.evaluate(toolName, toolDescription, args, {
+        client: serverName,
+        requestCount: this.stats.totalRequests,
+      });
+
+      const rulesEvaluated = this.policy.getConfig().rules
+        .filter((r) => r.action !== 'redact')
+        .map((rule) => {
+          const wasApplied = evalResult.reasons.some((r) =>
+            r.startsWith(`[${rule.id}]`),
+          );
+          return {
+            id: rule.id,
+            description: rule.description,
+            action: rule.action,
+            target: rule.target,
+            match: rule.match,
+            matched: wasApplied,
+            hasTimeWindow: !!rule.timeWindow,
+          };
+        });
+
+      res.json({
+        server: serverName,
+        tool: toolName,
+        description: toolDescription,
+        args,
+        action: evalResult.action,
+        reasons: evalResult.reasons,
+        redactedKeys: evalResult.redactedKeys,
+        rules: rulesEvaluated,
       });
     });
   }

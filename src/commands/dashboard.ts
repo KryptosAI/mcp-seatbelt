@@ -1,5 +1,8 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { existsSync, readFileSync } from "node:fs";
 import chalk from "chalk";
+import { parsePolicy } from "../policy/yaml.js";
+import { PolicyEngine } from "../policy/engine.js";
 
 interface DashboardStats {
   status: "running" | "stopped";
@@ -10,7 +13,8 @@ interface DashboardStats {
   uptime: number;
   startTime: string;
   connectedClients: string[];
-  recentBlockedCalls: { tool: string; server: string; reason: string; time: string }[];
+  recentBlockedCalls: { tool: string; server: string; reason: string; time: string; args?: string }[];
+  latency?: { p50: number; p95: number; p99: number; avg: number; max: number; count: number; throughput: number };
 }
 
 let currentStats: DashboardStats = {
@@ -30,12 +34,13 @@ export function updateDashboardStats(stats: Partial<DashboardStats>): void {
   currentStats.uptime = Date.now() - new Date(currentStats.startTime).getTime();
 }
 
-export function addBlockedCall(tool: string, server: string, reason: string): void {
+export function addBlockedCall(tool: string, server: string, reason: string, args?: string): void {
   currentStats.recentBlockedCalls.unshift({
     tool,
     server,
     reason,
     time: new Date().toISOString(),
+    args,
   });
   if (currentStats.recentBlockedCalls.length > 50) {
     currentStats.recentBlockedCalls = currentStats.recentBlockedCalls.slice(0, 50);
@@ -65,10 +70,11 @@ function renderDashboardPage(): string {
       <td>${escapeHtml(call.server)}</td>
       <td class="dim">${escapeHtml(call.reason.slice(0, 80))}</td>
       <td class="dim">${new Date(call.time).toLocaleTimeString()}</td>
+      <td><button class="simulate-btn" onclick="simulateBlock('${escapeHtml(call.tool)}', '${escapeHtml(call.server)}')" title="Simulate this call">▶</button></td>
     </tr>`,
       )
       .join("\n")
-    : `<tr><td colspan="4" class="dim" style="text-align:center">No blocked calls recorded</td></tr>`;
+    : `<tr><td colspan="5" class="dim" style="text-align:center">No blocked calls recorded</td></tr>`;
 
   const clientsHtml = currentStats.connectedClients.length > 0
     ? currentStats.connectedClients
@@ -138,6 +144,36 @@ function renderDashboardPage(): string {
   .bar-blocked { background: var(--red); height: 100%; }
   footer { text-align: center; padding: 24px; color: var(--text-dim); font-size: 12px; border-top: 1px solid var(--border); margin-top: 32px; }
   .refresh-indicator { font-size: 11px; color: var(--text-dim); margin-left: 12px; }
+  .simulate-btn {
+    background: var(--surface); border: 1px solid var(--border); color: var(--accent);
+    padding: 2px 8px; border-radius: 4px; cursor: pointer; font-size: 12px;
+  }
+  .simulate-btn:hover { background: var(--border); }
+  #simulate-modal {
+    display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+    background: rgba(0,0,0,0.6); z-index: 1000; align-items: center; justify-content: center;
+  }
+  #simulate-modal.open { display: flex; }
+  #simulate-modal .modal-content {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+    padding: 24px; max-width: 600px; width: 90%; max-height: 80vh; overflow-y: auto;
+  }
+  #simulate-modal .modal-close {
+    float: right; background: none; border: none; color: var(--text-dim);
+    font-size: 20px; cursor: pointer;
+  }
+  #simulate-modal .simulate-result { margin-top: 16px; padding: 12px; background: var(--bg); border-radius: 4px; font-size: 13px; }
+  #simulate-modal .simulate-result .rule-line { margin: 4px 0; }
+  #simulate-modal .simulate-result .rule-deny { color: var(--red); }
+  #simulate-modal .simulate-result .rule-allow { color: var(--green); }
+  #simulate-modal .simulate-result .rule-warn { color: var(--yellow); }
+  #simulate-modal .simulate-result .rule-redact { color: #c084fc; }
+  #simulate-modal .simulate-actions { margin-top: 16px; }
+  #simulate-modal .simulate-actions button {
+    background: var(--accent); border: none; color: var(--bg);
+    padding: 8px 16px; border-radius: 4px; cursor: pointer; font-weight: 600;
+    margin-right: 8px;
+  }
 </style>
 </head>
 <body>
@@ -175,6 +211,22 @@ function renderDashboardPage(): string {
       <div class="card-label">Uptime</div>
       <div class="card-value">${hours}h ${minutes}m ${seconds}s</div>
     </div>
+    <div class="card">
+      <div class="card-label">Throughput</div>
+      <div class="card-value blue">${currentStats.latency?.throughput ?? 0} req/s</div>
+    </div>
+    <div class="card">
+      <div class="card-label">P50 Latency</div>
+      <div class="card-value ${(currentStats.latency?.p50 ?? 0) > 50 ? 'yellow' : 'green'}">${currentStats.latency?.p50 ?? 0}ms</div>
+    </div>
+    <div class="card">
+      <div class="card-label">P95 Latency</div>
+      <div class="card-value ${(currentStats.latency?.p95 ?? 0) > 100 ? 'red' : (currentStats.latency?.p95 ?? 0) > 50 ? 'yellow' : 'green'}">${currentStats.latency?.p95 ?? 0}ms</div>
+    </div>
+    <div class="card">
+      <div class="card-label">P99 Latency</div>
+      <div class="card-value ${(currentStats.latency?.p99 ?? 0) > 200 ? 'red' : (currentStats.latency?.p99 ?? 0) > 50 ? 'yellow' : 'green'}">${currentStats.latency?.p99 ?? 0}ms</div>
+    </div>
   </div>
 
   <div class="bar-container">
@@ -196,6 +248,7 @@ function renderDashboardPage(): string {
         <th>Server</th>
         <th>Reason</th>
         <th>Time</th>
+        <th>Sim</th>
       </tr>
     </thead>
     <tbody>
@@ -206,9 +259,70 @@ function renderDashboardPage(): string {
 <footer>
   mcp-seatbelt dashboard · <span id="poll-time"></span> · <a href="/api/stats" style="color:var(--accent)">API</a>
 </footer>
+<div id="simulate-modal">
+  <div class="modal-content">
+    <button class="modal-close" onclick="document.getElementById('simulate-modal').classList.remove('open')">&times;</button>
+    <h3 style="margin:0 0 16px">Policy Simulation</h3>
+    <div><strong>Tool:</strong> <span id="sim-tool"></span></div>
+    <div style="margin-top:4px"><strong>Server:</strong> <span id="sim-server"></span></div>
+    <div id="simulate-result" class="simulate-result" style="display:none"></div>
+    <div class="simulate-actions">
+      <button onclick="runSimulation()">Run Simulation</button>
+      <button onclick="document.getElementById('simulate-modal').classList.remove('open')" style="background:var(--border);color:var(--text)">Close</button>
+    </div>
+  </div>
+</div>
 <script>
   function formatTime() { return new Date().toLocaleTimeString(); }
   document.getElementById('poll-time').textContent = 'last updated ' + formatTime();
+
+  let currentSimTool = '';
+  let currentSimServer = '';
+
+  function simulateBlock(tool, server) {
+    currentSimTool = tool;
+    currentSimServer = server;
+    document.getElementById('sim-tool').innerHTML = '<code>' + tool + '</code>';
+    document.getElementById('sim-server').textContent = server;
+    document.getElementById('simulate-result').style.display = 'none';
+    document.getElementById('simulate-modal').classList.add('open');
+  }
+
+  async function runSimulation() {
+    const resultEl = document.getElementById('simulate-result');
+    resultEl.style.display = 'block';
+    resultEl.innerHTML = '<em>Running simulation...</em>';
+    try {
+      const resp = await fetch('/' + encodeURIComponent(currentSimServer) + '/explain', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tool: currentSimTool, description: '', args: {} })
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        let html = '<strong>Action:</strong> <span class="rule-' + data.action + '">' + data.action.toUpperCase() + '</span><br>';
+        if (data.reasons && data.reasons.length > 0) {
+          html += '<div style="margin-top:8px"><strong>Reasons:</strong></div>';
+          data.reasons.forEach(function(r) { html += '<div class="rule-line">' + r + '</div>'; });
+        }
+        if (data.rules && data.rules.length > 0) {
+          html += '<div style="margin-top:8px"><strong>Rules Evaluated:</strong></div>';
+          data.rules.forEach(function(r) {
+            var cls = 'rule-' + r.action;
+            html += '<div class="rule-line ' + cls + '">[' + r.id + '] ' + r.action.toUpperCase() + ' — ' + r.description;
+            if (r.hasTimeWindow && !r.matched) html += ' (outside time window)';
+            html += '</div>';
+          });
+        }
+        resultEl.innerHTML = html;
+      } else {
+        resultEl.innerHTML = '<span style="color:var(--red)">Simulation failed: explain endpoint not available. Start the proxy first.</span>';
+      }
+    } catch(e) {
+      resultEl.innerHTML = '<span style="color:var(--red)">Error: explain endpoint not reachable. Make sure the proxy server is running.</span>';
+    }
+  }
+
   setInterval(() => {
     fetch('/api/stats')
       .then(r => r.json())
@@ -238,10 +352,26 @@ function escapeHtml(str: string): string {
 
 export interface DashboardOptions {
   port: string;
+  proxyUrl?: string;
+  policyPath?: string;
+}
+
+let dashboardEngine: PolicyEngine | null = null;
+
+export function setDashboardPolicy(policyPath: string): void {
+  if (existsSync(policyPath)) {
+    const raw = readFileSync(policyPath, "utf-8");
+    const config = parsePolicy(raw);
+    dashboardEngine = new PolicyEngine(config);
+  }
 }
 
 export async function dashboardCommand(opts: DashboardOptions): Promise<void> {
   const port = parseInt(opts.port, 10) || 9421;
+
+  if (opts.policyPath) {
+    setDashboardPolicy(opts.policyPath);
+  }
 
   currentStats.status = "running";
   currentStats.startTime = new Date().toISOString();
@@ -274,6 +404,84 @@ export async function dashboardCommand(opts: DashboardOptions): Promise<void> {
 
       req.on("close", () => {
         clearInterval(interval);
+      });
+      return;
+    }
+
+    if (req.method === "POST" && req.url && req.url.endsWith("/explain")) {
+      const serverName = req.url.replace(/^\/+/, "").replace(/\/explain$/, "");
+      let body = "";
+      req.on("data", (chunk: Buffer) => {
+        body += chunk.toString();
+      });
+      req.on("end", () => {
+        try {
+          const data = JSON.parse(body || "{}") as Record<string, any>;
+          const tool = data.tool || data.name || serverName;
+          const description = data.description || "";
+          const args = data.args || data.arguments || {};
+
+          const engine = dashboardEngine;
+
+          if (!engine) {
+            res.writeHead(200, {
+              "Content-Type": "application/json",
+              "Access-Control-Allow-Origin": "*",
+            });
+            res.end(JSON.stringify({
+              server: serverName,
+              tool,
+              description,
+              action: "error",
+              reasons: ["No policy loaded in dashboard. Pass --policy-path to load a policy."],
+              rules: [],
+            }));
+            return;
+          }
+
+          const evalResult = engine.evaluate(tool, description, args, {
+            client: serverName,
+            requestCount: 1,
+          });
+
+          const rulesEvaluated = engine.getConfig().rules
+            .filter((r) => r.action !== "redact")
+            .map((rule) => {
+              const wasApplied = evalResult.reasons.some((r) =>
+                r.startsWith(`[${rule.id}]`),
+              );
+              return {
+                id: rule.id,
+                description: rule.description,
+                action: rule.action,
+                target: rule.target,
+                match: rule.match,
+                matched: wasApplied,
+                hasTimeWindow: !!rule.timeWindow,
+              };
+            });
+
+          res.writeHead(200, {
+            "Content-Type": "application/json",
+            "Access-Control-Allow-Origin": "*",
+          });
+          res.end(JSON.stringify({
+            server: serverName,
+            tool,
+            description,
+            args,
+            action: evalResult.action,
+            reasons: evalResult.reasons,
+            redactedKeys: evalResult.redactedKeys,
+            rules: rulesEvaluated,
+          }));
+        } catch (err) {
+          res.writeHead(400, {
+            "Content-Type": "application/json",
+            "Access-Control-Allow-Origin": "*",
+          });
+          res.end(JSON.stringify({ error: "Invalid request body" }));
+        }
       });
       return;
     }

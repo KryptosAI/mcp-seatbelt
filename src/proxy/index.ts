@@ -5,5 +5,6 @@ export {
   filterToolsListResponse,
   filterResourcesListResponse,
   filterPromptsListResponse,
+  scanResponse,
 } from "./intercept.js";
-export type { MCPRequest, MCPResponse } from "./intercept.js";
+export type { MCPRequest, MCPResponse, RedactionLog, ScanResult } from "./intercept.js";

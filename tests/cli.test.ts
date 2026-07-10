@@ -351,3 +351,534 @@ allowlist:
     expect(stdout).toContain('--config');
   });
 });
+
+describe('CLI simulate command', () => {
+  it('simulate --help shows simulate options', async () => {
+    const { stdout } = await execFileAsync(tsxPath, [cliEntry, 'simulate', '--help']);
+    expect(stdout).toContain('--tool');
+    expect(stdout).toContain('--policy');
+    expect(stdout).toContain('--json');
+    expect(stdout).toContain('--verbose');
+  });
+
+  it('simulate blocks a tool matching a deny rule', async () => {
+    const dir = tmpDir();
+    try {
+      const policyPath = join(dir, 'policy.yml');
+      writeFileSync(policyPath, `version: "1"
+mode: enforce
+defaultAction: allow
+rules:
+  - id: block-shell
+    description: Block shell tools
+    target: command
+    match: exact
+    values:
+      - bash
+    action: deny
+allowlist:
+  tools: []
+  paths: []
+  hosts: []
+  envVars: []
+`, 'utf-8');
+
+      const { stdout } = await execFileAsync(tsxPath, [
+        cliEntry, 'simulate',
+        '--tool', 'bash',
+        '--description', 'Runs a bash command',
+        '--args', '{"command": "rm -rf /"}',
+        '--server', 'filesystem',
+        '--policy', policyPath,
+      ]);
+      expect(stdout).toContain('[block-shell]');
+      expect(stdout).toContain('DENY');
+      expect(stdout).toContain('BLOCKED');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('simulate allows a tool that matches no deny rules', async () => {
+    const dir = tmpDir();
+    try {
+      const policyPath = join(dir, 'policy.yml');
+      writeFileSync(policyPath, `version: "1"
+mode: enforce
+defaultAction: allow
+rules:
+  - id: block-shell
+    description: Block shell tools
+    target: command
+    match: exact
+    values:
+      - bash
+    action: deny
+  - id: block-sensitive-paths
+    description: Block filesystem writes to sensitive paths
+    target: file
+    match: pattern
+    values:
+      - "^/etc(/|$)"
+    action: deny
+allowlist:
+  tools: []
+  paths: []
+  hosts: []
+  envVars: []
+`, 'utf-8');
+
+      const { stdout } = await execFileAsync(tsxPath, [
+        cliEntry, 'simulate',
+        '--tool', 'read_file',
+        '--description', 'Reads a file',
+        '--args', '{"filePath": "/home/user/data.txt"}',
+        '--policy', policyPath,
+      ]);
+      expect(stdout).toContain('ALLOWED');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('simulate --json outputs machine-readable JSON', async () => {
+    const dir = tmpDir();
+    try {
+      const policyPath = join(dir, 'policy.yml');
+      writeFileSync(policyPath, `version: "1"
+mode: enforce
+defaultAction: deny
+rules:
+  - id: block-all
+    description: Block everything
+    target: command
+    match: pattern
+    values:
+      - ".*"
+    action: deny
+allowlist:
+  tools: []
+  paths: []
+  hosts: []
+  envVars: []
+`, 'utf-8');
+
+      const { stdout } = await execFileAsync(tsxPath, [
+        cliEntry, 'simulate',
+        '--tool', 'some_tool',
+        '--policy', policyPath,
+        '--json',
+      ]);
+      const output = JSON.parse(stdout);
+      expect(output.tool).toBe('some_tool');
+      expect(output.action).toBe('deny');
+      expect(Array.isArray(output.reasons)).toBe(true);
+      expect(Array.isArray(output.rules)).toBe(true);
+      expect(output.rules.length).toBeGreaterThan(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('simulate --verbose shows all rules', async () => {
+    const dir = tmpDir();
+    try {
+      const policyPath = join(dir, 'policy.yml');
+      writeFileSync(policyPath, `version: "1"
+mode: enforce
+defaultAction: allow
+rules:
+  - id: block-shell
+    description: Block shell tools
+    target: command
+    match: exact
+    values:
+      - bash
+    action: deny
+  - id: block-etc
+    description: Block etc writes
+    target: file
+    match: pattern
+    values:
+      - "^/etc(/|$)"
+    action: deny
+  - id: warn-large-files
+    description: Warn on large files
+    target: file
+    match: contains
+    values:
+      - large
+    action: warn
+allowlist:
+  tools: []
+  paths: []
+  hosts: []
+  envVars: []
+`, 'utf-8');
+
+      const { stdout } = await execFileAsync(tsxPath, [
+        cliEntry, 'simulate',
+        '--tool', 'read_file',
+        '--description', 'Reads a safe file',
+        '--args', '{"filePath": "/tmp/safe.txt"}',
+        '--policy', policyPath,
+        '--verbose',
+      ]);
+      expect(stdout).toContain('block-shell');
+      expect(stdout).toContain('block-etc');
+      expect(stdout).toContain('warn-large-files');
+      expect(stdout).toContain('ALLOWED');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('simulate errors when policy file does not exist', async () => {
+    try {
+      await execFileAsync(tsxPath, [
+        cliEntry, 'simulate',
+        '--tool', 'test',
+        '--policy', '/nonexistent/policy.yml',
+      ]);
+    } catch (err: any) {
+      expect(err.code).toBe(1);
+      expect(err.stderr || err.stdout).toContain('not found');
+    }
+  });
+
+  it('simulate errors when --args is invalid JSON', async () => {
+    const dir = tmpDir();
+    try {
+      const policyPath = join(dir, 'policy.yml');
+      writeFileSync(policyPath, `version: "1"\nmode: enforce\ndefaultAction: deny\nrules: []\nallowlist:\n  tools: []\n  paths: []\n  hosts: []\n  envVars: []\n`, 'utf-8');
+
+      try {
+        await execFileAsync(tsxPath, [
+          cliEntry, 'simulate',
+          '--tool', 'test',
+          '--policy', policyPath,
+          '--args', '{invalid json}',
+        ]);
+      } catch (err: any) {
+        expect(err.code).toBe(1);
+        expect(err.stderr || err.stdout).toContain('parse');
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('simulate shows time window info for time-windowed rules', async () => {
+    const dir = tmpDir();
+    try {
+      const now = new Date();
+      const currentDay = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][now.getDay()];
+      const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'].includes(currentDay)
+        ? ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
+        : ['Saturday', 'Sunday'];
+      const policyPath = join(dir, 'policy.yml');
+      writeFileSync(policyPath, `version: "1"
+mode: enforce
+defaultAction: allow
+rules:
+  - id: business-hours-only
+    description: Only apply during business hours
+    target: command
+    match: pattern
+    values:
+      - ".*"
+    action: deny
+    timeWindow:
+      days:
+${days.map(d => `        - ${d}`).join('\n')}
+      startHour: 9
+      endHour: 17
+allowlist:
+  tools: []
+  paths: []
+  hosts: []
+  envVars: []
+`, 'utf-8');
+
+      const { stdout } = await execFileAsync(tsxPath, [
+        cliEntry, 'simulate',
+        '--tool', 'some_tool',
+        '--policy', policyPath,
+        '--verbose',
+      ]);
+      expect(stdout).toContain('business-hours-only');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('simulate shows matched pattern detail', async () => {
+    const dir = tmpDir();
+    try {
+      const policyPath = join(dir, 'policy.yml');
+      writeFileSync(policyPath, `version: "1"
+mode: enforce
+defaultAction: allow
+rules:
+  - id: block-sensitive-paths
+    description: Block filesystem writes to sensitive system and configuration paths
+    target: file
+    match: pattern
+    values:
+      - "^/etc(/|$)"
+    action: deny
+allowlist:
+  tools: []
+  paths: []
+  hosts: []
+  envVars: []
+`, 'utf-8');
+
+      const { stdout } = await execFileAsync(tsxPath, [
+        cliEntry, 'simulate',
+        '--tool', 'write_file',
+        '--description', 'writes to a file',
+        '--args', '{"filePath": "/etc/hosts"}',
+        '--server', 'filesystem',
+        '--policy', policyPath,
+      ]);
+      expect(stdout).toContain('[block-sensitive-paths]');
+      expect(stdout).toContain('DENY');
+      expect(stdout).toContain('/etc/hosts');
+      expect(stdout).toContain('BLOCKED');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('CLI test-policy command', () => {
+  it('test-policy --help shows test-policy options', async () => {
+    const { stdout } = await execFileAsync(tsxPath, [cliEntry, 'test-policy', '--help']);
+    expect(stdout).toContain('test-file');
+    expect(stdout).toContain('--policy');
+  });
+
+  it('test-policy runs tests and reports pass', async () => {
+    const dir = tmpDir();
+    try {
+      const policyPath = join(dir, 'custom-policy.yml');
+      writeFileSync(policyPath, `version: "1"
+mode: enforce
+defaultAction: allow
+rules:
+  - id: block-shell-execution
+    description: Block shell execution
+    target: command
+    match: pattern
+    values:
+      - "^bash$"
+      - "^sh$"
+    action: deny
+allowlist:
+  tools: []
+  paths: []
+  hosts: []
+  envVars: []
+`, 'utf-8');
+
+      const testFilePath = join(dir, 'tests.yml');
+      writeFileSync(testFilePath, `
+tests:
+  - name: "Should block shell execution"
+    tool: "bash"
+    description: "Run a bash command"
+    args: { command: "rm -rf /" }
+    expect: deny
+    matchReason: "block-shell-execution"
+  - name: "Should allow read_file"
+    tool: "read_file"
+    args: { path: "/home/user/data.txt" }
+    expect: allow
+`, 'utf-8');
+
+      const { stdout } = await execFileAsync(tsxPath, [
+        cliEntry, 'test-policy',
+        testFilePath,
+        '--policy', policyPath,
+      ]);
+      expect(stdout).toContain('Should block shell execution');
+      expect(stdout).toContain('Should allow read_file');
+      expect(stdout).toContain('passed');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('test-policy exits with code 1 when a test fails', async () => {
+    const dir = tmpDir();
+    try {
+      const testFilePath = join(dir, 'tests.yml');
+      writeFileSync(testFilePath, `
+tests:
+  - name: "This test expects deny but will get allow"
+    tool: "safe_tool"
+    description: "A safe tool"
+    args: {}
+    expect: deny
+`, 'utf-8');
+
+      try {
+        await execFileAsync(tsxPath, [
+          cliEntry, 'test-policy',
+          testFilePath,
+        ]);
+      } catch (err: any) {
+        expect(err.code).toBe(1);
+        expect(err.stdout).toContain('failed');
+        expect(err.stdout).toContain('This test expects deny but will get allow');
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('test-policy reports matchReason mismatch', async () => {
+    const dir = tmpDir();
+    try {
+      const testFilePath = join(dir, 'tests.yml');
+      writeFileSync(testFilePath, `
+tests:
+  - name: "Should block shell but wrong reason"
+    tool: "bash"
+    description: "Run a bash command"
+    args: { command: "rm -rf /" }
+    expect: deny
+    matchReason: "nonexistent-reason"
+`, 'utf-8');
+
+      try {
+        await execFileAsync(tsxPath, [
+          cliEntry, 'test-policy',
+          testFilePath,
+        ]);
+      } catch (err: any) {
+        expect(err.code).toBe(1);
+        expect(err.stdout).toContain('failed');
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('test-policy errors when test file does not exist', async () => {
+    try {
+      await execFileAsync(tsxPath, [
+        cliEntry, 'test-policy',
+        '/nonexistent/test.yml',
+      ]);
+    } catch (err: any) {
+      expect(err.code).toBe(1);
+      expect(err.stderr || err.stdout).toContain('not found');
+    }
+  });
+
+  it('test-policy supports --policy flag with custom policy', async () => {
+    const dir = tmpDir();
+    try {
+      const policyPath = join(dir, 'custom-policy.yml');
+      writeFileSync(policyPath, `version: "1"
+mode: enforce
+defaultAction: allow
+rules:
+  - id: block-custom-tool
+    description: Block custom tool
+    target: command
+    match: exact
+    values:
+      - custom_dangerous_tool
+    action: deny
+allowlist:
+  tools: []
+  paths: []
+  hosts: []
+  envVars: []
+`, 'utf-8');
+
+      const testFilePath = join(dir, 'tests.yml');
+      writeFileSync(testFilePath, `
+tests:
+  - name: "Should block custom dangerous tool"
+    tool: "custom_dangerous_tool"
+    args: {}
+    expect: deny
+    matchReason: "block-custom-tool"
+  - name: "Should allow other tool"
+    tool: "safe_tool"
+    args: {}
+    expect: allow
+`, 'utf-8');
+
+      const { stdout } = await execFileAsync(tsxPath, [
+        cliEntry, 'test-policy',
+        testFilePath,
+        '--policy', policyPath,
+      ]);
+      expect(stdout).toContain('Should block custom dangerous tool');
+      expect(stdout).toContain('Should allow other tool');
+      expect(stdout).toContain('2 passed');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('test-policy reports correct summary counts', async () => {
+    const dir = tmpDir();
+    try {
+      const policyPath = join(dir, 'custom-policy.yml');
+      writeFileSync(policyPath, `version: "1"
+mode: enforce
+defaultAction: allow
+rules:
+  - id: block-shell-execution
+    description: Block shell execution
+    target: command
+    match: pattern
+    values:
+      - "^bash$"
+      - "^sh$"
+    action: deny
+allowlist:
+  tools: []
+  paths: []
+  hosts: []
+  envVars: []
+`, 'utf-8');
+
+      const testFilePath = join(dir, 'tests.yml');
+      writeFileSync(testFilePath, `
+tests:
+  - name: "Test 1 - block bash"
+    tool: "bash"
+    description: "shell"
+    args: {}
+    expect: deny
+  - name: "Test 2 - allow read"
+    tool: "read_file"
+    args: {}
+    expect: allow
+  - name: "Test 3 - block sh"
+    tool: "sh"
+    description: "shell"
+    args: {}
+    expect: deny
+`, 'utf-8');
+
+      const { stdout } = await execFileAsync(tsxPath, [
+        cliEntry, 'test-policy',
+        testFilePath,
+        '--policy', policyPath,
+      ]);
+      expect(stdout).toContain('3 passed');
+      expect(stdout).toContain('0 failed');
+      expect(stdout).toContain('3 total');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

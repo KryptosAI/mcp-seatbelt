@@ -807,3 +807,234 @@ describe('rule inheritance (extends)', () => {
     await expect(engine.loadFromFile(childPath)).rejects.toThrow('not found');
   });
 });
+
+describe('argConstraints', () => {
+  it('equals constraint passes when arg value matches exactly', () => {
+    const rule: PolicyRule = {
+      id: 'constrain-equals',
+      description: 'Allow only exact arg match',
+      target: 'command',
+      match: 'contains',
+      values: ['my_tool'],
+      action: 'allow',
+      argConstraints: [
+        { argName: 'env', constraint: 'equals', values: ['production'] },
+      ],
+    };
+    const engine = new PolicyEngine(makeAllowDefaultPolicy([rule]));
+    const result = engine.evaluate('my_tool', '', { env: 'production' });
+    expect(result.action).toBe('allow');
+  });
+
+  it('equals constraint fails when arg value does not match', () => {
+    const rule: PolicyRule = {
+      id: 'constrain-equals',
+      description: 'Allow only exact arg match',
+      target: 'command',
+      match: 'contains',
+      values: ['my_tool'],
+      action: 'allow',
+      argConstraints: [
+        { argName: 'env', constraint: 'equals', values: ['production'] },
+      ],
+    };
+    const engine = new PolicyEngine(makeAllowDefaultPolicy([rule]));
+    const result = engine.evaluate('my_tool', '', { env: 'staging' });
+    expect(result.action).toBe('deny');
+    expect(result.reasons.some((r) => r.includes('does not match equals'))).toBe(true);
+  });
+
+  it('startsWith constraint passes when arg value starts with value', () => {
+    const rule: PolicyRule = {
+      id: 'workspace-only',
+      description: 'Allow workspace paths only',
+      target: 'command',
+      match: 'contains',
+      values: ['write_file'],
+      action: 'allow',
+      argConstraints: [
+        { argName: 'filePath', constraint: 'startsWith', values: ['/workspace/'] },
+      ],
+    };
+    const engine = new PolicyEngine(makeAllowDefaultPolicy([rule]));
+    const result = engine.evaluate('write_file', '', { filePath: '/workspace/src/main.ts' });
+    expect(result.action).toBe('allow');
+  });
+
+  it('startsWith constraint fails when arg value does not start with value', () => {
+    const rule: PolicyRule = {
+      id: 'workspace-only',
+      description: 'Allow workspace paths only',
+      target: 'command',
+      match: 'contains',
+      values: ['write_file'],
+      action: 'allow',
+      argConstraints: [
+        { argName: 'filePath', constraint: 'startsWith', values: ['/workspace/'] },
+      ],
+    };
+    const engine = new PolicyEngine(makeAllowDefaultPolicy([rule]));
+    const result = engine.evaluate('write_file', '', { filePath: '/etc/hosts' });
+    expect(result.action).toBe('deny');
+    expect(result.reasons.some((r) => r.includes("startsWith '/workspace/'"))).toBe(true);
+  });
+
+  it('regex constraint passes when arg matches pattern', () => {
+    const rule: PolicyRule = {
+      id: 'regex-match',
+      description: 'Only allow numeric IDs',
+      target: 'command',
+      match: 'contains',
+      values: ['my_tool'],
+      action: 'allow',
+      argConstraints: [
+        { argName: 'id', constraint: 'regex', values: ['^\\d+$'] },
+      ],
+    };
+    const engine = new PolicyEngine(makeAllowDefaultPolicy([rule]));
+    const result = engine.evaluate('my_tool', '', { id: '12345' });
+    expect(result.action).toBe('allow');
+  });
+
+  it('regex constraint fails when arg does not match pattern', () => {
+    const rule: PolicyRule = {
+      id: 'regex-match',
+      description: 'Only allow numeric IDs',
+      target: 'command',
+      match: 'contains',
+      values: ['my_tool'],
+      action: 'allow',
+      argConstraints: [
+        { argName: 'id', constraint: 'regex', values: ['^\\d+$'] },
+      ],
+    };
+    const engine = new PolicyEngine(makeAllowDefaultPolicy([rule]));
+    const result = engine.evaluate('my_tool', '', { id: 'abc' });
+    expect(result.action).toBe('deny');
+    expect(result.reasons.some((r) => r.includes('regex'))).toBe(true);
+  });
+
+  it('in constraint passes when arg is in allowed values', () => {
+    const rule: PolicyRule = {
+      id: 'in-constraint',
+      description: 'Allow only certain environments',
+      target: 'command',
+      match: 'contains',
+      values: ['my_tool'],
+      action: 'allow',
+      argConstraints: [
+        { argName: 'env', constraint: 'in', values: ['dev', 'staging', 'production'] },
+      ],
+    };
+    const engine = new PolicyEngine(makeAllowDefaultPolicy([rule]));
+    const result = engine.evaluate('my_tool', '', { env: 'dev' });
+    expect(result.action).toBe('allow');
+  });
+
+  it('in constraint fails when arg is not in allowed values', () => {
+    const rule: PolicyRule = {
+      id: 'in-constraint',
+      description: 'Allow only certain environments',
+      target: 'command',
+      match: 'contains',
+      values: ['my_tool'],
+      action: 'allow',
+      argConstraints: [
+        { argName: 'env', constraint: 'in', values: ['dev', 'staging', 'production'] },
+      ],
+    };
+    const engine = new PolicyEngine(makeAllowDefaultPolicy([rule]));
+    const result = engine.evaluate('my_tool', '', { env: 'test' });
+    expect(result.action).toBe('deny');
+    expect(result.reasons.some((r) => r.includes('not in allowed'))).toBe(true);
+  });
+
+  it('notIn constraint passes when arg is not in disallowed values', () => {
+    const rule: PolicyRule = {
+      id: 'notin-constraint',
+      description: 'Disallow certain environments',
+      target: 'command',
+      match: 'contains',
+      values: ['my_tool'],
+      action: 'allow',
+      argConstraints: [
+        { argName: 'env', constraint: 'notIn', values: ['production', 'staging'] },
+      ],
+    };
+    const engine = new PolicyEngine(makeAllowDefaultPolicy([rule]));
+    const result = engine.evaluate('my_tool', '', { env: 'dev' });
+    expect(result.action).toBe('allow');
+  });
+
+  it('notIn constraint fails when arg is in disallowed values', () => {
+    const rule: PolicyRule = {
+      id: 'notin-constraint',
+      description: 'Disallow certain environments',
+      target: 'command',
+      match: 'contains',
+      values: ['my_tool'],
+      action: 'allow',
+      argConstraints: [
+        { argName: 'env', constraint: 'notIn', values: ['production', 'staging'] },
+      ],
+    };
+    const engine = new PolicyEngine(makeAllowDefaultPolicy([rule]));
+    const result = engine.evaluate('my_tool', '', { env: 'production' });
+    expect(result.action).toBe('deny');
+    expect(result.reasons.some((r) => r.includes('disallowed'))).toBe(true);
+  });
+
+  it('constraint fails when arg is missing from args', () => {
+    const rule: PolicyRule = {
+      id: 'missing-arg',
+      description: 'Requires env arg',
+      target: 'command',
+      match: 'contains',
+      values: ['my_tool'],
+      action: 'allow',
+      argConstraints: [
+        { argName: 'env', constraint: 'equals', values: ['production'] },
+      ],
+    };
+    const engine = new PolicyEngine(makeAllowDefaultPolicy([rule]));
+    const result = engine.evaluate('my_tool', '', {});
+    expect(result.action).toBe('deny');
+    expect(result.reasons.some((r) => r.includes('missing'))).toBe(true);
+  });
+
+  it('multiple constraints all must pass for rule to match', () => {
+    const rule: PolicyRule = {
+      id: 'multi-constraint',
+      description: 'Validate path and env',
+      target: 'command',
+      match: 'contains',
+      values: ['write_file'],
+      action: 'allow',
+      argConstraints: [
+        { argName: 'filePath', constraint: 'startsWith', values: ['/workspace/'] },
+        { argName: 'env', constraint: 'in', values: ['dev', 'staging'] },
+      ],
+    };
+    const engine = new PolicyEngine(makeAllowDefaultPolicy([rule]));
+
+    const pass = engine.evaluate('write_file', '', { filePath: '/workspace/foo.ts', env: 'dev' });
+    expect(pass.action).toBe('allow');
+
+    const fail = engine.evaluate('write_file', '', { filePath: '/workspace/foo.ts', env: 'production' });
+    expect(fail.action).toBe('deny');
+  });
+
+  it('rule with NO argConstraints behaves normally (no constraint check)', () => {
+    const rule: PolicyRule = {
+      id: 'no-constraints',
+      description: 'No constraints at all',
+      target: 'command',
+      match: 'contains',
+      values: ['my_tool'],
+      action: 'allow',
+    };
+    const engine = new PolicyEngine(makeAllowDefaultPolicy([rule]));
+    const result = engine.evaluate('my_tool', '', {});
+    expect(result.action).toBe('allow');
+  });
+});

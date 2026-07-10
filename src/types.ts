@@ -26,6 +26,12 @@ export interface RiskFlag {
   severity: "low" | "medium" | "high" | "critical";
 }
 
+export interface ArgConstraint {
+  argName: string;
+  constraint: "equals" | "startsWith" | "regex" | "in" | "notIn";
+  values: string[];
+}
+
 export interface PolicyRule {
   id: string;
   description: string;
@@ -33,8 +39,15 @@ export interface PolicyRule {
   match: "exact" | "pattern" | "contains";
   values: string[];
   action: "allow" | "deny" | "warn" | "redact";
+  argConstraints?: ArgConstraint[];
   timeWindow?: { days?: string[]; startHour?: number; endHour?: number };
   contextCondition?: { clientIn?: string[]; maxRequestsPerMinute?: number };
+}
+
+export interface WebhookConfig {
+  url: string;
+  events: Array<"deny" | "warn" | "redact">;
+  format?: "slack" | "discord" | "json";
 }
 
 export interface PolicyConfig {
@@ -50,6 +63,9 @@ export interface PolicyConfig {
   };
   allowSampling: boolean;
   extends?: string[];
+  notifications?: {
+    webhooks?: WebhookConfig[];
+  };
 }
 
 export interface RiskReport {
@@ -88,6 +104,7 @@ export interface ProxyStats {
   allowed: number;
   warned: number;
   redacted: number;
+  redactedCount: number;
   startTime: string;
   uptime: number;
 }

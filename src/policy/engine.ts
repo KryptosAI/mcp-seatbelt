@@ -1,9 +1,11 @@
-import type { PolicyConfig, PolicyRule } from '../types.js';
+import type { ArgConstraint, PolicyConfig, PolicyRule } from '../types.js';
 import { load, dump } from 'js-yaml';
 import { readFile, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { resolve, dirname, isAbsolute } from 'node:path';
 import { validatePolicy } from './schema.js';
+import type { AuditTrail, AuditEntryInput } from '../audit.js';
+import type { JudgeResult } from './llm-judge.js';
 
 export interface EvaluateResult {
   action: 'allow' | 'deny' | 'warn' | 'redact';
@@ -31,15 +33,186 @@ interface EngineStats {
   allowlisted: number;
 }
 
+export interface ToolProfile {
+  toolName: string;
+  totalCalls: number;
+  hourDistribution: number[];
+  typicalArgs: Map<string, { count: number; values: Set<string> }>;
+  avgArgSize: number;
+  firstSeen: string;
+  lastSeen: string;
+}
+
+export interface Deviation {
+  type: 'new_args' | 'size_anomaly' | 'hour_anomaly' | 'new_tool';
+  severity: 'info' | 'warn';
+  toolName: string;
+  detail: string;
+}
+
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+export class BehavioralBaseline {
+  profiles: Map<string, ToolProfile> = new Map();
+  private readonly BASELINE_WINDOW = 100;
+
+  observe(toolName: string, args: Record<string, unknown>): void {
+    let profile = this.profiles.get(toolName);
+    const now = new Date();
+    const nowIso = now.toISOString();
+
+    if (!profile) {
+      profile = {
+        toolName,
+        totalCalls: 0,
+        hourDistribution: new Array(24).fill(0) as number[],
+        typicalArgs: new Map(),
+        avgArgSize: 0,
+        firstSeen: nowIso,
+        lastSeen: nowIso,
+      };
+      this.profiles.set(toolName, profile);
+    }
+
+    profile.totalCalls++;
+    profile.hourDistribution[now.getHours()]++;
+    profile.lastSeen = nowIso;
+
+    const argSize = JSON.stringify(args).length;
+    profile.avgArgSize =
+      (profile.avgArgSize * (profile.totalCalls - 1) + argSize) / profile.totalCalls;
+
+    for (const key of Object.keys(args)) {
+      let entry = profile.typicalArgs.get(key);
+      if (!entry) {
+        entry = { count: 0, values: new Set() };
+        profile.typicalArgs.set(key, entry);
+      }
+      entry.count++;
+      const val = args[key];
+      if (typeof val === 'string' && val.length < 100) {
+        if (entry.values.size < 10) {
+          entry.values.add(val);
+        }
+      }
+    }
+  }
+
+  detectDeviation(toolName: string, args: Record<string, unknown>): Deviation[] {
+    const profile = this.profiles.get(toolName);
+    const deviations: Deviation[] = [];
+
+    if (!profile) {
+      return [{ type: 'new_tool', severity: 'info', toolName, detail: `First time seeing tool "${toolName}"` }];
+    }
+
+    if (profile.totalCalls < this.BASELINE_WINDOW) return [];
+
+    const newKeys = Object.keys(args).filter((k) => !profile!.typicalArgs.has(k));
+    if (newKeys.length > 0) {
+      deviations.push({
+        type: 'new_args',
+        severity: 'warn',
+        toolName,
+        detail: `New argument keys never seen before: [${newKeys.join(', ')}]`,
+      });
+    }
+
+    const argSize = JSON.stringify(args).length;
+    if (profile.avgArgSize > 0 && argSize > profile.avgArgSize * 3) {
+      deviations.push({
+        type: 'size_anomaly',
+        severity: 'warn',
+        toolName,
+        detail: `Arg size ${argSize} bytes exceeds 3x average (${profile.avgArgSize.toFixed(0)})`,
+      });
+    }
+
+    const currentHour = new Date().getHours();
+    if (profile.totalCalls > 10) {
+      const mean = profile.totalCalls / 24;
+      let variance = 0;
+      for (let i = 0; i < 24; i++) {
+        variance += Math.pow(profile.hourDistribution[i] - mean, 2);
+      }
+      variance /= 24;
+      const stdDev = Math.sqrt(variance);
+      const callsThisHour = profile.hourDistribution[currentHour];
+
+      if (callsThisHour === 0 && profile.hourDistribution.some((h: number) => h > 0)) {
+        deviations.push({
+          type: 'hour_anomaly',
+          severity: 'info',
+          toolName,
+          detail: `Call at hour ${currentHour}:00 — no prior calls at this hour`,
+        });
+      } else if (stdDev > 0 && Math.abs(callsThisHour - mean) > 2 * stdDev + 1) {
+        deviations.push({
+          type: 'hour_anomaly',
+          severity: 'info',
+          toolName,
+          detail: `Call frequency at hour ${currentHour}:00 outside 2σ of normal (${mean.toFixed(1)} ± ${(2 * stdDev).toFixed(1)})`,
+        });
+      }
+    }
+
+    return deviations;
+  }
+
+  generateReport(): string {
+    const lines: string[] = [];
+    const entries = [...this.profiles.entries()].sort((a, b) => b[1].totalCalls - a[1].totalCalls);
+
+    if (entries.length === 0) {
+      return 'No behavioral data collected.\n';
+    }
+
+    lines.push('Behavioral Baseline Report');
+    lines.push('=========================\n');
+
+    for (const [name, profile] of entries) {
+      const normalHours: string[] = [];
+      const maxCalls = Math.max(...profile.hourDistribution, 1);
+      for (let i = 0; i < 24; i++) {
+        if (profile.hourDistribution[i] > maxCalls * 0.1) {
+          normalHours.push(`${i}:00`);
+        }
+      }
+      const hoursStr = normalHours.length > 0 ? normalHours.join(', ') : 'no pattern';
+
+      const topArgs = [...profile.typicalArgs.entries()]
+        .sort((a, b) => b[1].count - a[1].count)
+        .slice(0, 5)
+        .map(([k]) => k);
+
+      lines.push(`Tool: ${name}`);
+      lines.push(`  Calls: ${profile.totalCalls.toLocaleString()}`);
+      lines.push(`  Normal hours: ${hoursStr}`);
+      lines.push(`  Typical args: [${topArgs.join(', ')}]`);
+      lines.push(`  Avg arg size: ${profile.avgArgSize.toFixed(0)} bytes`);
+      lines.push(`  First seen: ${profile.firstSeen}`);
+      lines.push(`  Last seen: ${profile.lastSeen}`);
+      lines.push('');
+    }
+
+    return lines.join('\n');
+  }
+}
 
 export class PolicyEngine {
   private config: PolicyConfig;
   private auditLog: AuditEntry[] = [];
   private requestTimestamps: Map<string, number[]> = new Map();
+  private auditTrail: AuditTrail | null = null;
+  private judgeImpl: import('./llm-judge.js').LLMJudge | null = null;
+  private baseliner: BehavioralBaseline = new BehavioralBaseline();
 
   constructor(config: PolicyConfig) {
     this.config = structuredClone(config);
+  }
+
+  setAuditTrail(trail: AuditTrail): void {
+    this.auditTrail = trail;
   }
 
   evaluate(toolName: string, toolDescription: string, args: Record<string, unknown>, _context?: EvaluateContext): EvaluateResult {
@@ -71,6 +244,7 @@ export class PolicyEngine {
       if (reasons.length === 0 && action === 'allow') {
         reasons.push('Audit mode: all calls allowed');
       }
+      this.baseliner.observe(toolName, args);
       this.recordAudit(toolName, toolDescription, args, action, reasons.join('; '), _context);
       return {
         action,
@@ -88,6 +262,16 @@ export class PolicyEngine {
 
       if (this.ruleMatches(rule, toolName, toolDescription, args)) {
         if (rule.contextCondition && !this.matchesContextCondition(rule, _context)) continue;
+
+        if (rule.argConstraints && rule.argConstraints.length > 0) {
+          const constraintResult = this.checkArgConstraints(rule.argConstraints, args);
+          if (!constraintResult.passed) {
+            reasons.push(`[${rule.id}] ${rule.description}`);
+            reasons.push(constraintResult.reason);
+            action = 'deny';
+            break;
+          }
+        }
 
         reasons.push(`[${rule.id}] ${rule.description}`);
 
@@ -116,11 +300,54 @@ export class PolicyEngine {
       );
     }
 
+    const deviations = this.baseliner.detectDeviation(toolName, args);
+    for (const d of deviations) {
+      reasons.push(`[baseline] ${d.type}: ${d.detail}`);
+    }
+
+    this.baseliner.observe(toolName, args);
+
     return {
       action,
       reasons,
       redactedKeys: redactedKeys.size > 0 ? [...redactedKeys] : undefined,
     };
+  }
+
+  setJudge(judge: import('./llm-judge.js').LLMJudge): void {
+    this.judgeImpl = judge;
+  }
+
+  async evaluateWithJudge(
+    toolName: string,
+    toolDescription: string,
+    args: Record<string, unknown>,
+    context?: EvaluateContext,
+  ): Promise<EvaluateResult> {
+    const result = this.evaluate(toolName, toolDescription, args, context);
+
+    if (!this.judgeImpl || result.action === 'deny') {
+      return result;
+    }
+
+    const judgeResult = await this.judgeImpl.evaluate({
+      toolName,
+      description: toolDescription,
+      args,
+    });
+
+    const escalated = this.judgeImpl.escalate(result.action, judgeResult);
+
+    if (escalated !== result.action) {
+      result.reasons.push(`[judge] Escalated from ${result.action} to ${escalated}: ${judgeResult.reasoning}`);
+      result.action = escalated;
+    }
+
+    return result;
+  }
+
+  getBaseliner(): BehavioralBaseline {
+    return this.baseliner;
   }
 
   addRule(rule: PolicyRule): void {
@@ -163,6 +390,10 @@ export class PolicyEngine {
       { indent: 2, lineWidth: -1, noRefs: true },
     );
     await writeFile(yamlPath, yaml, 'utf-8');
+  }
+
+  getConfig(): PolicyConfig {
+    return this.config;
   }
 
   isSamplingAllowed(): boolean {
@@ -256,7 +487,7 @@ export class PolicyEngine {
     reason: string,
     context?: EvaluateContext,
   ): void {
-    this.auditLog.push({
+    const entry: AuditEntry = {
       toolName,
       description: toolDescription,
       args,
@@ -264,7 +495,14 @@ export class PolicyEngine {
       timestamp: new Date().toISOString(),
       reason,
       context,
-    });
+    };
+    this.auditLog.push(entry);
+
+    if (this.auditTrail) {
+      this.auditTrail.append(entry).catch((err) => {
+        console.error(`[mcp-seatbelt:audit] Failed to write audit entry: ${err instanceof Error ? err.message : 'Unknown error'}`);
+      });
+    }
   }
 
   private isWithinTimeWindow(
@@ -572,5 +810,77 @@ export class PolicyEngine {
     }
 
     return result;
+  }
+
+  private checkArgConstraints(
+    constraints: ArgConstraint[],
+    args: Record<string, unknown>,
+  ): { passed: boolean; reason: string } {
+    for (const c of constraints) {
+      const argValue = args[c.argName];
+      if (argValue === undefined) {
+        return {
+          passed: false,
+          reason: `Arg '${c.argName}' is missing (required by constraint)`,
+        };
+      }
+
+      const strValue = typeof argValue === 'string' ? argValue : JSON.stringify(argValue);
+
+      switch (c.constraint) {
+        case 'equals':
+          if (!c.values.some((v: string) => strValue === v)) {
+            return {
+              passed: false,
+              reason: `Arg '${c.argName}'='${strValue}' does not match equals constraint`,
+            };
+          }
+          break;
+
+        case 'startsWith':
+          if (!c.values.some((v: string) => strValue.startsWith(v))) {
+            return {
+              passed: false,
+              reason: `Arg '${c.argName}'='${strValue}' does not match startsWith '${c.values.join("', '")}'`,
+            };
+          }
+          break;
+
+        case 'regex':
+          if (!c.values.some((v: string) => {
+            try {
+              return new RegExp(v).test(strValue);
+            } catch {
+              return false;
+            }
+          })) {
+            return {
+              passed: false,
+              reason: `Arg '${c.argName}'='${strValue}' does not match regex constraint`,
+            };
+          }
+          break;
+
+        case 'in':
+          if (!c.values.includes(strValue)) {
+            return {
+              passed: false,
+              reason: `Arg '${c.argName}'='${strValue}' is not in allowed values`,
+            };
+          }
+          break;
+
+        case 'notIn':
+          if (c.values.includes(strValue)) {
+            return {
+              passed: false,
+              reason: `Arg '${c.argName}'='${strValue}' is in disallowed values`,
+            };
+          }
+          break;
+      }
+    }
+
+    return { passed: true, reason: '' };
   }
 }
