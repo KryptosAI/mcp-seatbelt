@@ -180,7 +180,7 @@ program
   .option("--description <text>", "Tool description")
   .option("--args <json>", "Tool arguments as JSON string", "{}")
   .option("--server <name>", "Server/client name", "simulate")
-  .requiredOption("--policy <path>", "Path to policy YAML file")
+  .option("--policy <path>", "Path to policy YAML file", ".mcp-seatbelt/policy.yml")
   .option("--json", "Output machine-readable JSON")
   .option("--verbose", "Show all rules evaluated, not just matching ones")
   .action(async (opts) => {
