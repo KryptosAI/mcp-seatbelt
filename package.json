@@ -1,6 +1,6 @@
 {
   "name": "@kryptosai/mcp-seatbelt",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Runtime guardrails for AI agent MCP tools. Detect MCP configs, wrap risky servers with a policy proxy, and block dangerous tool calls at runtime.",
   "main": "dist/index.js",
   "bin": {
