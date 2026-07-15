@@ -7,6 +7,8 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
 [![Node: ≥22](https://img.shields.io/badge/node-%E2%89%A522-339933)](https://nodejs.org)
 
+> **Part of the MCP Security Platform.** Scan before you trust with [mcp-observatory](https://github.com/KryptosAI/mcp-observatory) (144★), then enforce at runtime with mcp-seatbelt.
+
 <img src="docs/demo.gif" alt="MCP Seatbelt demo" width="700"/>
 
 <!-- ![Demo](docs/demo.gif) -->
