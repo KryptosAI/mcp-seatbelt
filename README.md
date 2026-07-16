@@ -1,6 +1,6 @@
 # MCP Seatbelt — Runtime Guardrails for AI Agent Tools
 
-**Stop dangerous MCP tool calls before they reach your system. Scan, proxy, enforce.**
+**Block dangerous MCP tool calls at the protocol layer. Scan, proxy, enforce.**
 
 [![CI](https://github.com/KryptosAI/mcp-seatbelt/actions/workflows/mcp-seatbelt.yml/badge.svg)](https://github.com/KryptosAI/mcp-seatbelt/actions/workflows/mcp-seatbelt.yml)
 [![npm version](https://img.shields.io/npm/v/mcp-seatbelt?color=blue)](https://www.npmjs.com/package/mcp-seatbelt)
@@ -8,6 +8,8 @@
 [![Node: ≥22](https://img.shields.io/badge/node-%E2%89%A522-339933)](https://nodejs.org)
 
 > **Part of the MCP Security Platform.** Scan before you trust with [mcp-observatory](https://github.com/KryptosAI/mcp-observatory) (144★), then enforce at runtime with mcp-seatbelt.
+
+🌐 **Website:** [kryptosai.github.io/mcp-seatbelt](https://kryptosai.github.io/mcp-seatbelt/) — demo, comparison, pricing
 
 <img src="docs/demo.gif" alt="MCP Seatbelt demo" width="700"/>
 
@@ -17,9 +19,9 @@
 
 ## The Problem
 
-AI coding agents (Cursor, Claude, VS Code, ChatGPT, Windsurf, and others) connect to MCP servers that expose file systems, shell interpreters, network access, and environment variables. Static scanners and manifest audits can tell you that you're exposed — but they can't stop a tool call mid-execution. By the time a scanner flags a risky server, the agent may have already run a destructive command, exfiltrated credentials, or reached out to an untrusted endpoint.
+AI coding agents (Cursor, Claude, VS Code, ChatGPT, Windsurf, and others) connect to MCP servers that expose file systems, shell interpreters, network access, and environment variables. Static scanners tell you you're exposed — but they act after the fact. By the time a scanner flags a risky server, the agent may have already run a destructive command, exfiltrated credentials, or reached out to an untrusted endpoint.
 
-**MCP Seatbelt adds a runtime enforcement layer.** It sits between the agent and every MCP server, evaluates each tool call against a policy you control, and blocks dangerous requests before they touch your files, shells, or network.
+**MCP Seatbelt adds a runtime enforcement layer.** It acts as a policy proxy between the agent and every MCP server, evaluating each JSON-RPC tool call against rules you control and denying dangerous requests before they reach the upstream. It does not operate at the TCP level — it inspects and gate-checks every call at L7 (the MCP protocol layer) before forwarding.
 
 ---
 
