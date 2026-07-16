@@ -37,6 +37,8 @@ AI coding agents (Cursor, Claude, VS Code, ChatGPT, Windsurf, and others) connec
 
 - **Live dashboard, SARIF reports, CI/CD integration, and observatory bridge** — A real-time HTML dashboard shows request stats, block rates, connected clients, and recent blocked calls. Generate SARIF 2.1.0 reports for GitHub Code Scanning. Import security findings from [mcp-observatory](https://github.com/KryptosAI/mcp-observatory) and automatically convert them to policy rules. `mcp-seatbelt check` exits non-zero in CI when critical risks are detected.
 
+- **Per-call timeouts** — Hung tool calls are killed and return a clean JSON-RPC error instead of a raw 503. Configurable per-rule (10s for shell commands, 60s for safe tools).
+
 ---
 
 ## Quick Start
@@ -80,6 +82,8 @@ On first run, `init` creates `.mcp-seatbelt/policy.yml` (your editable ruleset) 
 - **Interceptor** — Applies the engine's decision. Allowed calls are forwarded. Denied calls receive an MCP error response. Warned calls proceed but are logged. `redact` replaces argument values matching credential patterns with `***`.
 - **Transport Client** — Forwards allowed requests to the real upstream MCP server and streams responses back to the agent.
 
+The proxy never returns a raw upstream error to the agent. If a call exceeds its timeout, the child process is killed and the agent receives a clean error message — no 503s, no hanging connections.
+
 ---
 
 ## Comparison
@@ -94,6 +98,7 @@ On first run, `init` creates `.mcp-seatbelt/policy.yml` (your editable ruleset) 
 | Live dashboard | ✓ | ✗ | ✓ | ✗ | ✗ |
 | SARIF / GitHub Code Scanning | ✓ | ✗ | ✗ | ✗ | ✗ |
 | mcp-observatory integration | ✓ | ✗ | ✗ | ✗ | ✗ |
+| Per-call timeouts | ✓ | ✗ | ✗ | ✗ | ✗ |
 
 Seatbelt is the only tool that combines pre-install scanning with runtime enforcement, covers all major AI agent clients, redacts credential arguments inline, and bridges static analysis results from mcp-observatory into live policy rules.
 

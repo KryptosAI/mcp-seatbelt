@@ -735,7 +735,7 @@ describe('SseClient', () => {
       id: 77,
     });
 
-    await expect(promise).rejects.toThrow('Request timeout');
+    await expect(promise).rejects.toThrow('exceeded timeout');
     client.stop();
   }, 35000);
 
@@ -793,5 +793,176 @@ describe('SseClient', () => {
 
     await new Promise((r) => setTimeout(r, 1500));
     expect(true).toBe(true);
+  });
+});
+
+// --- Per-call timeout tests ---
+
+describe('StdioClient timeout', () => {
+  it('kills child process on timeout and rejects with exceeded timeout', async () => {
+    const client = new StdioClient('node', ['-e', 'setTimeout(() => {}, 99999)']);
+    await client.start();
+
+    const promise = client.send({
+      jsonrpc: '2.0',
+      method: 'tools/list',
+      id: 1,
+    }, 1000);
+
+    await expect(promise).rejects.toThrow('exceeded timeout');
+    expect((client as any).child.killed).toBe(true);
+
+    client.stop();
+  });
+
+  it('preserves fast requests with configurable timeout', async () => {
+    const echoScript = `
+      const rl = require('readline').createInterface({ input: process.stdin });
+      rl.on('line', (line) => {
+        try {
+          const req = JSON.parse(line);
+          console.log(JSON.stringify({ jsonrpc: '2.0', result: {}, id: req.id }));
+        } catch (e) {}
+      });
+    `;
+    const client = new StdioClient('node', ['-e', echoScript.trim()]);
+    await client.start();
+
+    const response = await client.send({
+      jsonrpc: '2.0',
+      method: 'echo',
+      id: 1,
+    }, 5000);
+
+    expect(response).not.toBeNull();
+    expect(response!.jsonrpc).toBe('2.0');
+    expect(response!.id).toBe(1);
+    expect(response!.result).toEqual({});
+
+    client.stop();
+  });
+});
+
+describe('HttpClient timeout', () => {
+  let hangingServer: http.Server;
+  let hangingPort: number;
+
+  beforeAll(async () => {
+    return new Promise<void>((resolve) => {
+      hangingServer = http.createServer((_req, _res) => {
+        // never respond
+      });
+      hangingServer.listen(0, () => {
+        hangingPort = (hangingServer.address() as any).port;
+        resolve();
+      });
+    });
+  });
+
+  afterAll(() => {
+    hangingServer.close();
+  });
+
+  it('handles AbortError when server never responds', async () => {
+    const client = new HttpClient(`http://localhost:${hangingPort}`);
+
+    const promise = client.send({
+      jsonrpc: '2.0',
+      method: 'tools/list',
+      id: 1,
+    }, 1000);
+
+    await expect(promise).rejects.toThrow('exceeded timeout');
+  });
+});
+
+describe('ProxyServer timeout', () => {
+  let proxy: ProxyServer;
+
+  afterEach(async () => {
+    if (proxy) {
+      try { await proxy.stop(); } catch {}
+    }
+  });
+
+  it('returns 504 with clean JSON error on timeout', async () => {
+    const slowScript = `
+      const rl = require('readline').createInterface({ input: process.stdin });
+      rl.on('line', (line) => {
+        try {
+          const req = JSON.parse(line);
+          if (req.method === 'tools/list') {
+            console.log(JSON.stringify({ jsonrpc: '2.0', result: { tools: [] }, id: req.id }));
+          }
+          // hang for everything else
+        } catch (e) {}
+      });
+    `;
+
+    const timeoutPolicy = new PolicyEngine({
+      version: '1',
+      mode: 'enforce',
+      defaultAction: 'allow',
+      defaultTimeoutMs: 500,
+      rules: [],
+      allowlist: { tools: [], paths: [], hosts: [], envVars: [] },
+      allowSampling: true,
+    });
+
+    proxy = new ProxyServer(timeoutPolicy, 0);
+    proxy.registerServer({
+      name: 'slow',
+      command: 'node',
+      args: ['-e', slowScript.trim()],
+      transport: 'stdio' as const,
+      risk: { score: 0, level: 'low', flags: [] },
+    });
+    await proxy.start();
+
+    const addr = (proxy as any).httpServer?.address();
+    const port = addr?.port;
+
+    const response = await fetch(`http://localhost:${port}/slow`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', method: 'tools/call', params: { name: 'hang_forever' }, id: 1 }),
+    });
+
+    expect(response.status).toBe(504);
+    const body = await response.json();
+    expect(body.jsonrpc).toBe('2.0');
+    expect(body.error).toBeDefined();
+    expect(body.error.message).toMatch(/timeout/i);
+    expect(body.error.code).toBe(-32001);
+  });
+});
+
+describe('Per-rule timeout overrides', () => {
+  it('uses rule timeoutMs for matching tool, default for non-matching', () => {
+    const engine = new PolicyEngine({
+      version: '1',
+      mode: 'enforce',
+      defaultAction: 'allow',
+      defaultTimeoutMs: 5000,
+      rules: [
+        {
+          id: 'slow-tool-rule',
+          description: 'Slow tools get a short timeout',
+          target: 'command' as const,
+          match: 'exact' as const,
+          values: ['slow_tool'],
+          action: 'deny' as const,
+          timeoutMs: 1000,
+        },
+      ],
+      allowlist: { tools: [], paths: [], hosts: [], envVars: [] },
+      allowSampling: true,
+    });
+
+    const fastResult = engine.getEffectiveTimeout('slow_tool', '', {});
+    expect(fastResult).toBe(1000);
+
+    const defaultResult = engine.getEffectiveTimeout('other_tool', '', {});
+    expect(defaultResult).toBe(5000);
   });
 });

@@ -5,6 +5,7 @@ export const DEFAULT_POLICY: PolicyConfig = {
   version: '1',
   mode: 'enforce',
   defaultAction: 'deny',
+  defaultTimeoutMs: 30000,
   rules: [
     {
       id: 'block-shell-execution',
@@ -32,6 +33,7 @@ export const DEFAULT_POLICY: PolicyConfig = {
         '\\bpwsh\\s+-Command\\b',
       ],
       action: 'deny',
+      timeoutMs: 10000,
     },
     {
       id: 'block-sensitive-paths',
@@ -70,6 +72,7 @@ export const DEFAULT_POLICY: PolicyConfig = {
       match: 'contains',
       values: ['password', 'secret', 'token', 'key', 'credential'],
       action: 'redact',
+      timeoutMs: 5000,
     },
     {
       id: 'block-private-network',
@@ -108,6 +111,7 @@ export const DEFAULT_POLICY: PolicyConfig = {
         '\\bexecFileSync\\b',
       ],
       action: 'deny',
+      timeoutMs: 15000,
     },
     {
       id: 'allow-filesystem-writes-business-hours',
@@ -339,6 +343,7 @@ export function generateDefaultPolicy(configs: McpClientConfig[], mode: string =
     version: "0.1.0",
     mode: mode as "audit" | "enforce",
     defaultAction: "deny",
+    defaultTimeoutMs: DEFAULT_POLICY.defaultTimeoutMs,
     rules: DEFAULT_POLICY.rules,
     allowlist: {
       tools: [...allTools],
@@ -355,6 +360,7 @@ export function generateDefaultPolicyFile(): string {
     version: DEFAULT_POLICY.version,
     mode: DEFAULT_POLICY.mode,
     defaultAction: DEFAULT_POLICY.defaultAction,
+    defaultTimeoutMs: DEFAULT_POLICY.defaultTimeoutMs,
     rules: DEFAULT_POLICY.rules.map((rule) => ({
       id: rule.id,
       description: rule.description,
@@ -362,6 +368,7 @@ export function generateDefaultPolicyFile(): string {
       match: rule.match,
       values: rule.values,
       action: rule.action,
+      ...(rule.timeoutMs !== undefined ? { timeoutMs: rule.timeoutMs } : {}),
       ...(rule.timeWindow ? { timeWindow: rule.timeWindow } : {}),
       ...(rule.argConstraints ? { argConstraints: rule.argConstraints } : {}),
     })),

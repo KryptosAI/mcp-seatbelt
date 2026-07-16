@@ -42,6 +42,7 @@ export interface PolicyRule {
   argConstraints?: ArgConstraint[];
   timeWindow?: { days?: string[]; startHour?: number; endHour?: number };
   contextCondition?: { clientIn?: string[]; maxRequestsPerMinute?: number };
+  timeoutMs?: number;
 }
 
 export interface WebhookConfig {
@@ -54,6 +55,7 @@ export interface PolicyConfig {
   version: string;
   mode: "audit" | "enforce";
   defaultAction: "allow" | "deny";
+  defaultTimeoutMs?: number;
   rules: PolicyRule[];
   allowlist: {
     tools: string[];
@@ -105,6 +107,14 @@ export interface ProxyStats {
   warned: number;
   redacted: number;
   redactedCount: number;
+  timedOut: number;
   startTime: string;
   uptime: number;
+}
+
+export interface ProxyServerOptions {
+  apiKey?: string;
+  rateLimit?: number;
+  dlp?: boolean;
+  defaultTimeoutMs?: number;
 }

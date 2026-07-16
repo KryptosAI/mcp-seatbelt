@@ -12,19 +12,13 @@ import {
   filterPromptsListResponse,
   scanResponse,
 } from './intercept.js';
-import type { McpServerConfig, PolicyConfig, ProxyStats } from '../types.js';
+import type { McpServerConfig, PolicyConfig, ProxyStats, ProxyServerOptions } from '../types.js';
 
 export interface RegisteredServer {
   name: string;
   originalUrl: string;
   proxyUrl: string;
   risk: string;
-}
-
-export interface ProxyServerOptions {
-  apiKey?: string;
-  rateLimit?: number;
-  dlp?: boolean;
 }
 
 export interface LatencyStats {
@@ -72,6 +66,7 @@ export class StdioClient {
   private stopped = false;
   private restartCount = 0;
   private readonly MAX_RESTARTS = 5;
+  timedOut = 0;
   onNotification: ((notification: MCPResponse) => void) | null = null;
 
   constructor(command: string, args: string[], env?: Record<string, string>) {
@@ -173,7 +168,7 @@ export class StdioClient {
     });
   }
 
-  async send(request: MCPRequest): Promise<MCPResponse | null> {
+  async send(request: MCPRequest, timeoutMs?: number): Promise<MCPResponse | null> {
     if (!this.child || this.child.killed) {
       throw new Error('Process not running');
     }
@@ -183,12 +178,29 @@ export class StdioClient {
       return null;
     }
 
+    const effectiveTimeout = timeoutMs ?? 30000;
+
     return new Promise<MCPResponse>((resolve, reject) => {
       const id = request.id!;
       const timer = setTimeout(() => {
-        this.pending.delete(id);
-        reject(new Error(`Request timeout: ${request.method}`));
-      }, 30000);
+        this.timedOut++;
+
+        if (this.child && !this.child.killed) {
+          process.stderr.write(`[mcp-seatbelt:${this.command}] timeout after ${effectiveTimeout}ms, killing...\n`);
+          this.child.kill('SIGTERM');
+          setTimeout(() => {
+            if (this.child && !this.child.killed) {
+              this.child.kill('SIGKILL');
+            }
+          }, 2000);
+        }
+
+        for (const [, p] of this.pending) {
+          clearTimeout(p.timer);
+          p.reject(new Error(`Call exceeded timeout (${effectiveTimeout}ms)`));
+        }
+        this.pending.clear();
+      }, effectiveTimeout);
 
       this.pending.set(id, { resolve, reject, timer });
       if (!this.child?.stdin?.destroyed) {
@@ -216,6 +228,7 @@ export class HttpClient {
   private url: string;
   private pendingControllers: Set<AbortController> = new Set();
   private stopped = false;
+  timedOut = 0;
 
   constructor(url: string) {
     this.url = url;
@@ -233,9 +246,9 @@ export class HttpClient {
     this.pendingControllers.clear();
   }
 
-  async send(request: MCPRequest): Promise<MCPResponse> {
+  async send(request: MCPRequest, timeoutMs: number = 30000): Promise<MCPResponse> {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 30000);
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
     this.pendingControllers.add(controller);
 
     try {
@@ -259,7 +272,8 @@ export class HttpClient {
       this.pendingControllers.delete(controller);
 
       if (error instanceof Error && error.name === 'AbortError') {
-        throw new Error(`Request timeout: ${request.method}`);
+        this.timedOut++;
+        throw new Error(`Call exceeded timeout (${timeoutMs}ms)`);
       }
       throw error;
     }
@@ -275,6 +289,7 @@ export class SseClient {
   private reconnectCount = 0;
   private readonly MAX_RECONNECTS = 5;
   private messageEndpoint: string;
+  timedOut = 0;
   onNotification: ((notification: MCPResponse) => void) | null = null;
 
   constructor(url: string) {
@@ -372,7 +387,7 @@ export class SseClient {
     this.reconnectTimer = setTimeout(() => this.connectSSE(), 1000);
   }
 
-  async send(request: MCPRequest): Promise<MCPResponse | null> {
+  async send(request: MCPRequest, timeoutMs: number = 30000): Promise<MCPResponse | null> {
     if (request.id === undefined || request.id === null) {
       fetch(this.messageEndpoint, {
         method: 'POST',
@@ -387,8 +402,9 @@ export class SseClient {
     return new Promise<MCPResponse>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
-        reject(new Error(`Request timeout: ${request.method}`));
-      }, 30000);
+        this.timedOut++;
+        reject(new Error(`Call exceeded timeout (${timeoutMs}ms)`));
+      }, timeoutMs);
 
       this.pending.set(id, { resolve, reject, timer });
 
@@ -425,6 +441,7 @@ export class SseClient {
 export class StreamableHttpClient {
   private url: string;
   private stopped = false;
+  timedOut = 0;
 
   constructor(url: string) {
     this.url = url;
@@ -438,9 +455,9 @@ export class StreamableHttpClient {
     this.stopped = true;
   }
 
-  async send(request: MCPRequest): Promise<MCPResponse> {
+  async send(request: MCPRequest, timeoutMs: number = 30000): Promise<MCPResponse> {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 30000);
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
     try {
       const response = await fetch(this.url, {
@@ -480,7 +497,8 @@ export class StreamableHttpClient {
       clearTimeout(timeoutId);
 
       if (error instanceof Error && error.name === 'AbortError') {
-        throw new Error(`Request timeout: ${request.method}`);
+        this.timedOut++;
+        throw new Error(`Call exceeded timeout (${timeoutMs}ms)`);
       }
       throw error;
     }
@@ -504,6 +522,7 @@ export class ProxyServer {
   private rateLimitMax: number;
   private rateLimitWindow: number = 60000;
   private dlp: boolean;
+  private defaultTimeoutMs: number;
   private rateLimits: Map<string, RateLimitEntry> = new Map();
   private circuits: Map<string, CircuitBreakerState> = new Map();
   private readonly CIRCUIT_THRESHOLD = 5;
@@ -522,6 +541,7 @@ export class ProxyServer {
     this.apiKey = options?.apiKey ?? null;
     this.rateLimitMax = options?.rateLimit ?? 100;
     this.dlp = options?.dlp ?? true;
+    this.defaultTimeoutMs = options?.defaultTimeoutMs ?? 30000;
 
     this.app = express();
     this.app.use(express.json({ limit: '5mb' }));
@@ -533,6 +553,7 @@ export class ProxyServer {
       warned: 0,
       redacted: 0,
       redactedCount: 0,
+      timedOut: 0,
       startTime: '',
       uptime: 0,
     };
@@ -709,8 +730,14 @@ export class ProxyServer {
   }
 
   getStats(): ProxyStats {
+    let totalTimedOut = this.stats.timedOut;
+    for (const client of this.clients.values()) {
+      const c = client as unknown as { timedOut: number };
+      totalTimedOut += c.timedOut;
+    }
     return {
       ...this.stats,
+      timedOut: totalTimedOut,
       uptime: Date.now() - this.startTime.getTime(),
     };
   }
@@ -910,8 +937,22 @@ export class ProxyServer {
         return;
       }
 
+      let effectiveTimeout = this.defaultTimeoutMs;
+
+      if (mcpRequest.method === 'tools/call' && mcpRequest.params?.name) {
+        const description = this.toolDescriptions.get(mcpRequest.params.name) || '';
+        effectiveTimeout = this.policy.getEffectiveTimeout(
+          mcpRequest.params.name,
+          description,
+          mcpRequest.params.arguments ?? {},
+          effectiveTimeout,
+        );
+      } else {
+        effectiveTimeout = this.policy.getConfig().defaultTimeoutMs ?? effectiveTimeout;
+      }
+
       try {
-        const upstreamResponse = await client.send(mcpRequest);
+        const upstreamResponse = await client.send(mcpRequest, effectiveTimeout);
 
         this.recordSuccess(serverName);
 
@@ -980,14 +1021,24 @@ export class ProxyServer {
         }
       } catch (error) {
         this.recordFailure(serverName);
-        res.status(502).json({
-          jsonrpc: '2.0',
-          error: {
-            code: -32603,
-            message: `Upstream error: ${error instanceof Error ? error.message : 'Unknown error'}`,
-          },
-          id: mcpRequest.id ?? null,
-        });
+        const errMsg = error instanceof Error ? error.message : 'Unknown error';
+        if (/timeout/i.test(errMsg)) {
+          this.stats.timedOut++;
+          res.status(504).json({
+            jsonrpc: '2.0',
+            error: { code: -32001, message: errMsg },
+            id: mcpRequest.id ?? null,
+          });
+        } else {
+          res.status(502).json({
+            jsonrpc: '2.0',
+            error: {
+              code: -32603,
+              message: `Upstream error: ${errMsg}`,
+            },
+            id: mcpRequest.id ?? null,
+          });
+        }
       }
     });
 

@@ -400,6 +400,18 @@ export class PolicyEngine {
     return this.config.allowSampling !== false;
   }
 
+  getEffectiveTimeout(toolName: string, toolDescription: string, args: Record<string, unknown>, fallbackMs: number = 30000): number {
+    for (const rule of this.config.rules) {
+      if (rule.action === 'redact') continue;
+      if (rule.timeoutMs === undefined) continue;
+      if (rule.timeWindow && !this.isWithinTimeWindow(rule.timeWindow)) continue;
+      if (this.ruleMatches(rule, toolName, toolDescription, args)) {
+        return rule.timeoutMs;
+      }
+    }
+    return this.config.defaultTimeoutMs ?? fallbackMs;
+  }
+
   getAuditLog(): AuditEntry[] {
     return [...this.auditLog];
   }

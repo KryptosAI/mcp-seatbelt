@@ -24,6 +24,12 @@ export function validatePolicy(config: unknown): PolicyConfig {
     throw new Error(`Policy defaultAction must be "allow" or "deny", got ${JSON.stringify(obj.defaultAction)}`);
   }
 
+  if (obj.defaultTimeoutMs !== undefined && obj.defaultTimeoutMs !== null) {
+    if (typeof obj.defaultTimeoutMs !== 'number' || obj.defaultTimeoutMs <= 0 || !Number.isInteger(obj.defaultTimeoutMs)) {
+      throw new Error(`Policy defaultTimeoutMs must be a positive integer, got ${JSON.stringify(obj.defaultTimeoutMs)}`);
+    }
+  }
+
   if (!Array.isArray(obj.rules)) {
     throw new Error('Policy rules must be an array');
   }
@@ -68,6 +74,8 @@ export function validatePolicy(config: unknown): PolicyConfig {
 
   const notifications = validateNotifications(obj.notifications);
 
+  validateTimeoutMs(obj.defaultTimeoutMs, 'Policy defaultTimeoutMs');
+
   return {
     version: obj.version,
     mode: obj.mode as PolicyConfig['mode'],
@@ -80,6 +88,7 @@ export function validatePolicy(config: unknown): PolicyConfig {
       envVars: allowlist.envVars as string[],
     },
     allowSampling: typeof obj.allowSampling === 'boolean' ? obj.allowSampling : true,
+    ...(typeof obj.defaultTimeoutMs === 'number' ? { defaultTimeoutMs: obj.defaultTimeoutMs as number } : {}),
     ...(notifications ? { notifications } : {}),
   };
 }
@@ -213,6 +222,12 @@ function validateRule(rule: unknown, index: number): asserts rule is PolicyRule 
     }
   }
 
+  if (r.timeoutMs !== undefined && r.timeoutMs !== null) {
+    if (typeof r.timeoutMs !== 'number' || r.timeoutMs <= 0 || !Number.isInteger(r.timeoutMs)) {
+      throw new Error(`Policy rule[${index}].timeoutMs must be a positive integer`);
+    }
+  }
+
   if (r.argConstraints !== undefined && r.argConstraints !== null) {
     if (!Array.isArray(r.argConstraints)) {
       throw new Error(`Policy rule[${index}].argConstraints must be an array`);
@@ -235,5 +250,20 @@ function validateRule(rule: unknown, index: number): asserts rule is PolicyRule 
         throw new Error(`Policy rule[${index}].argConstraints[${ci}].values must contain only non-empty strings`);
       }
     }
+  }
+
+  validateTimeoutMs(r.timeoutMs, `Policy rule[${index}].timeoutMs`);
+}
+
+function validateTimeoutMs(value: unknown, field: string): void {
+  if (value === undefined) return;
+  if (typeof value !== 'number' || !Number.isInteger(value) || value <= 0) {
+    throw new Error(`${field} must be a positive integer`);
+  }
+  if (value < 100) {
+    throw new Error(`${field} must be at least 100ms`);
+  }
+  if (value > 300000) {
+    throw new Error(`${field} must be at most 300000ms (5 minutes)`);
   }
 }
