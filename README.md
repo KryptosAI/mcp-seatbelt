@@ -4,6 +4,7 @@
 
 [![CI](https://github.com/KryptosAI/mcp-seatbelt/actions/workflows/mcp-seatbelt.yml/badge.svg)](https://github.com/KryptosAI/mcp-seatbelt/actions/workflows/mcp-seatbelt.yml)
 [![npm version](https://img.shields.io/npm/v/mcp-seatbelt?color=blue)](https://www.npmjs.com/package/mcp-seatbelt)
+[![Docker](https://img.shields.io/badge/docker-ghcr.io%2Fkryptosai%2Fmcp--seatbelt-blue)](https://github.com/KryptosAI/mcp-seatbelt/pkgs/container/mcp-seatbelt)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
 [![Node: ≥22](https://img.shields.io/badge/node-%E2%89%A522-339933)](https://nodejs.org)
 
@@ -50,6 +51,12 @@ npx mcp-seatbelt dashboard     # view live stats at http://localhost:9421
 ```
 
 On first run, `init` creates `.mcp-seatbelt/policy.yml` (your editable ruleset) and `.mcp-seatbelt/risk-report.md` (a summary of every server and its risk flags). The proxy starts in `audit` mode by default — observe actual tool usage, then switch to `enforce` when ready.
+
+### Docker
+
+```bash
+docker run -p 9420:9420 -v $(pwd)/.mcp-seatbelt:/app/.mcp-seatbelt ghcr.io/kryptosai/mcp-seatbelt:latest proxy
+```
 
 ---
 
