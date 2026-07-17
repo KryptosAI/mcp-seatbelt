@@ -4,6 +4,7 @@
 
 [![CI](https://github.com/KryptosAI/mcp-seatbelt/actions/workflows/mcp-seatbelt.yml/badge.svg)](https://github.com/KryptosAI/mcp-seatbelt/actions/workflows/mcp-seatbelt.yml)
 [![npm version](https://img.shields.io/npm/v/mcp-seatbelt?color=blue)](https://www.npmjs.com/package/mcp-seatbelt)
+[![All Contributors](https://img.shields.io/badge/all_contributors-1-orange.svg?style=flat-square)](#contributors)
 [![Docker](https://img.shields.io/badge/docker-ghcr.io%2Fkryptosai%2Fmcp--seatbelt-blue)](https://github.com/KryptosAI/mcp-seatbelt/pkgs/container/mcp-seatbelt)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
 [![Node: ≥22](https://img.shields.io/badge/node-%E2%89%A522-339933)](https://nodejs.org)
