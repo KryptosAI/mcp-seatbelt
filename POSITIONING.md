@@ -57,7 +57,16 @@ npx observatory scan               npx seatbelt proxy
 
 - **Detect** MCP server configurations across 8 clients: Cursor, Claude Desktop, VS Code, Windsurf, ChatGPT Desktop, JetBrains, Codex, and project-local configs
 - **Transparent proxy** sits between your agent and MCP servers on port 9420 — no agent changes needed
+- **11-stage security pipeline**: RBAC → Schema Validation → Path Safety → Policy Engine → Threat Intel → Honeytokens → Attack Chains → Proxy → Response DLP → Forensics → Audit Log
 - **Policy engine** evaluates every JSON-RPC 2.0 call against 7 built-in policy rules: shell execution, sensitive paths, credential access, credential redaction, private network, process execution, and time-windowed filesystem writes
+- **OWASP LLM Top 10 mapping** — every blocked call is tagged with OWASP categories; compliance tags cover SOC2, HIPAA, GDPR, ISO 27001, and PCI-DSS
+- **Multi-step attack chain detection** via XState state machine tracking recon → execution → persistence → exfiltration
+- **Honeytoken injection** — plants decoy credentials in responses, alerts on exfiltration
+- **Schema-aware validation** — AJV-based JSON Schema validation with path traversal and injection detection
+- **Threat intelligence** — async ThreatFox IOC lookup for IP/domain reputation
+- **Input fuzzing** — generates edge-case payloads to test policy bypass resilience
+- **Role-based access control** — casbin-powered per-agent permissions
+- **Forensic capture** — signed `.mcpcap.json` session recording for incident analysis
 - **Dual mode**: `audit` logs violations; `enforce` blocks denied calls
 - **Live dashboard** at `localhost:9421` for real-time visibility into every tool call
 - **CI/CD ready** with `mcp-seatbelt check` returning non-zero on critical risk detection
@@ -77,6 +86,19 @@ npx observatory scan               npx seatbelt proxy
 | Prismor | ❌ | ✅ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ |
 | agent-shield | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ |
 | Tencent AI-Infra-Guard | ✅ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
+
+### Advanced Capabilities (Seatbelt v0.4.0)
+
+| Capability | Observatory + Seatbelt | mcp-firewall | mcp-guardian | Prismor | agent-shield |
+|---|---|---|---|---|---|
+| OWASP LLM Top 10 mapping | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Compliance tagging (SOC2/HIPAA) | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Attack chain detection | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Honeytoken injection & detection | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Schema-aware validation | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Threat intel (IOC lookup) | ✅ | ❌ | ❌ | ❌ | ❌ |
+| RBAC (per-agent access) | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Input fuzzing | ✅ | ❌ | ❌ | ❌ | ❌ |
 
 **No competitor checks both the "Pre-install Scan" and "Runtime Enforcement" columns.** Tools either scan and report, or proxy and block — never both. Our platform is the only solution that covers the full lifecycle: discover risk before connection, block danger at call time.
 
@@ -136,6 +158,11 @@ npx mcp-seatbelt import-observatory .mcp-observatory/runs/latest.json
 # Step 3: Enforce at runtime
 npx mcp-seatbelt proxy --policy enforce
 npx mcp-seatbelt dashboard
+
+# Advanced (v0.4.0)
+npx mcp-seatbelt fuzz --policy .mcp-seatbelt/policy.yml --iterations 200
+npx mcp-seatbelt rbac-init
+npx mcp-seatbelt record --output .mcp-seatbelt/sessions
 ```
 
 That's it. Three commands, one platform, full coverage.
@@ -186,17 +213,23 @@ For enterprise licensing, hosted observatory, or custom integrations:
 ## What Makes This Unique
 
 - **Only MCP security platform** that covers pre-install scanning AND runtime enforcement — everybody else does one or the other
-- **20 total security checks** — 13 risk rules in observatory plus 7 policy rules in seatbelt
-- **686 tests** across both tools (474 in observatory + 212 in seatbelt) ensuring reliability at every layer
+- **11-stage defense-in-depth pipeline** — RBAC → Schema → Policy → Threat Intel → Honeytokens → Attack Chains → Proxy → DLP → Forensics → Audit
+- **959 tests** across both tools (474 in observatory + 485 in seatbelt) ensuring reliability at every layer
 - **8 client detectors** — auto-discovers MCP configs in Cursor, Claude Desktop, VS Code, Windsurf, ChatGPT Desktop, JetBrains, Codex, and project-local configs
 - **9 check modules** covering shell interpreters, docker sandboxing, network tools, process spawning, destructive filesystem ops, remote access, sensitive environment variables, package runner risks, and privilege escalation
-- **29 CLI commands** across both tools (22 in observatory + 7 in seatbelt) covering every security workflow
+- **38 CLI commands** across both tools (22 in observatory + 16 in seatbelt) covering every security workflow
 - **Open source (MIT)**, npm-native, zero external dependencies beyond what you already trust
 - **CI/CD ready** with SARIF export, non-zero exit codes on failure, and GitHub Actions workflow templates
 - **Already listed** in the awesome-mcp-servers Security section — the ecosystem's canonical reference
 - **Argument redaction** — not just block/allow, but transparently redact credentials from tool calls before they reach the server
 - **Learning mode** — run in audit mode to observe real-world usage patterns before enforcing strict policies
 - **Time-windowed rules** — allow filesystem writes only during business hours, or block network access on weekends
+- **OWASP LLM Top 10 & compliance mapping** — every blocked call is tagged with OWASP categories and compliance controls (SOC2, HIPAA, GDPR, ISO 27001, PCI-DSS)
+- **Honeytoken detection** — plants decoy credentials in responses and alerts on exfiltration
+- **Attack chain state machine** — tracks multi-step patterns from recon through persistence to exfiltration
+- **Forensic capture** — signed `.mcpcap.json` sessions for incident response and audit trails
+- **Input fuzzing** — generates edge-case payloads to stress-test your policy rules and find bypasses
+- **Per-agent RBAC** — casbin-based role-based access control for admin vs. restricted agents
 
 ---
 

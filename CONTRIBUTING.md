@@ -33,6 +33,8 @@ mcp-seatbelt/
 ├── src/
 │   ├── index.ts            # CLI entry point (commander)
 │   ├── types.ts            # All shared TypeScript types
+│   ├── audit.ts            # Signed audit log (HMAC)
+│   ├── owasp-mapping.ts    # OWASP LLM Top 10 & compliance taxonomy
 │   ├── commands/           # CLI subcommand implementations
 │   │   ├── init.ts         # mcp-seatbelt init
 │   │   ├── check.ts        # mcp-seatbelt check
@@ -40,7 +42,13 @@ mcp-seatbelt/
 │   │   ├── report.ts       # mcp-seatbelt report
 │   │   ├── diff.ts         # mcp-seatbelt diff
 │   │   ├── dashboard.ts    # mcp-seatbelt dashboard
-│   │   └── import-observatory.ts  # mcp-seatbelt import-observatory
+│   │   ├── import-observatory.ts  # mcp-seatbelt import-observatory
+│   │   ├── fuzz.ts         # mcp-seatbelt fuzz
+│   │   ├── rbac-init.ts    # mcp-seatbelt rbac-init
+│   │   ├── simulate.ts     # mcp-seatbelt simulate
+│   │   ├── test-policy.ts  # mcp-seatbelt test-policy
+│   │   ├── benchmark.ts    # mcp-seatbelt benchmark
+│   │   └── baseline.ts     # mcp-seatbelt baseline
 │   ├── detectors/          # MCP config detectors per client
 │   │   ├── index.ts        # detectAll(), parseMcpServers()
 │   │   ├── risk.ts         # assessRisk() — risk scoring engine
@@ -50,21 +58,32 @@ mcp-seatbelt/
 │   │   ├── vscode.ts       # VS Code + Copilot Chat
 │   │   ├── codex.ts        # OpenAI Codex
 │   │   └── jetbrains.ts    # JetBrains IDEs
-│   ├── policy/             # Policy engine
+│   ├── policy/             # Policy engine & security
 │   │   ├── engine.ts       # PolicyEngine class
 │   │   ├── schema.ts       # validatePolicy()
 │   │   ├── defaults.ts     # DEFAULT_POLICY, generateDefaultPolicy()
-│   │   └── yaml.ts         # YAML parse/stringify helpers
+│   │   ├── yaml.ts         # YAML parse/stringify helpers
+│   │   ├── rbac.ts         # Casbin RBAC (initRBAC, checkAccess)
+│   │   ├── threat-intel.ts # ThreatFox IOC lookup
+│   │   └── llm-judge.ts    # LLM-as-judge semantic analysis
+│   ├── security/           # Defense-in-depth security modules
+│   │   ├── index.ts        # Re-exports
+│   │   ├── attack-chains.ts    # XState multi-step attack tracking
+│   │   ├── honeytokens.ts      # Decoy credential injection & detection
+│   │   ├── forensics.ts        # Signed .mcpcap.json session capture
+│   │   ├── fuzzer.ts           # JSON Schema fuzzing for policy bypass
+│   │   └── schema-validator.ts # AJV schema validation & path safety
 │   ├── proxy/              # Runtime proxy
 │   │   ├── index.ts        # Re-exports
 │   │   ├── server.ts       # ProxyServer, StdioClient, HttpClient, SseClient
-│   │   └── intercept.ts    # Request interception and response filtering
+│   │   ├── intercept.ts    # Request interception and response filtering
+│   │   └── notifications.ts # MCP notification handler
 │   ├── report/             # Report generators
 │   │   ├── generator.ts    # Markdown + JSON reports
 │   │   └── sarif.ts        # SARIF 2.1.0 report
 │   └── integrations/       # External tool bridges
 │       └── observatory.ts  # mcp-observatory bridge
-├── tests/                  # Vitest test suite
+├── tests/                  # Vitest test suite (18 files, 485 tests)
 ├── templates/              # Policy template shipped with the package
 └── .github/workflows/      # CI/CD (GitHub Actions)
 ```
@@ -123,6 +142,18 @@ Tests are written with Vitest. Test files mirror the source structure:
 - `tests/proxy-server.test.ts` — ProxyServer lifecycle, HTTP endpoints
 - `tests/report.test.ts` — Report generation (markdown + JSON)
 - `tests/cli.test.ts` — CLI arg parsing and integration tests
+- `tests/integration.test.ts` — End-to-end proxy + policy integration
+- `tests/rbac.test.ts` — Casbin RBAC initialization and access checks
+- `tests/threat-intel.test.ts` — ThreatFox IOC lookup
+- `tests/llm-judge.test.ts` — LLM-as-judge semantic analysis
+- `tests/attack-chains.test.ts` — Attack chain state machine
+- `tests/honeytokens.test.ts` — Honeytoken injection and detection
+- `tests/forensics.test.ts` — Forensic session capture
+- `tests/schema-validator.test.ts` — Schema validation and path safety
+- `tests/audit.test.ts` — Signed audit log
+- `tests/notifications.test.ts` — MCP notification handling
+- `tests/schema-notifications.test.ts` — Schema notification handling
+- `tests/baseline.test.ts` — Behavioral baseline reports
 
 ## Code Style
 

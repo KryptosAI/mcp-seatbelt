@@ -3,14 +3,14 @@
 **Block dangerous MCP tool calls at the protocol layer. Scan, proxy, enforce.**
 
 [![CI](https://github.com/KryptosAI/mcp-seatbelt/actions/workflows/mcp-seatbelt.yml/badge.svg)](https://github.com/KryptosAI/mcp-seatbelt/actions/workflows/mcp-seatbelt.yml)
-[![npm version](https://img.shields.io/npm/v/mcp-seatbelt?color=blue)](https://www.npmjs.com/package/mcp-seatbelt)
-[![All Contributors](https://img.shields.io/badge/all_contributors-1-orange.svg?style=flat-square)](#contributors)
-[![OWASP](https://img.shields.io/badge/OWASP-LLM%20Top%2010-red)](https://owasp.org/www-project-top-10-for-large-language-model-applications/)
-[![Casbin](https://img.shields.io/badge/Casbin-RBAC-blue)](https://casbin.org/)
-[![ThreatFox](https://img.shields.io/badge/ThreatFox-IOC-black)](https://threatfox.abuse.ch/)
-[![Docker](https://img.shields.io/badge/docker-ghcr.io%2Fkryptosai%2Fmcp--seatbelt-blue)](https://github.com/KryptosAI/mcp-seatbelt/pkgs/container/mcp-seatbelt)
+[![npm version](https://img.shields.io/npm/v/@kryptosai/mcp-seatbelt?color=blue)](https://www.npmjs.com/package/@kryptosai/mcp-seatbelt)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
 [![Node: ≥22](https://img.shields.io/badge/node-%E2%89%A522-339933)](https://nodejs.org)
+[![All Contributors](https://img.shields.io/badge/all_contributors-1-orange.svg)](#contributors)
+[![Tests](https://img.shields.io/badge/tests-485-brightgreen)]()
+[![Docker](https://img.shields.io/badge/docker-ghcr.io%2Fkryptosai%2Fmcp--seatbelt-blue)](https://github.com/KryptosAI/mcp-seatbelt/pkgs/container/mcp-seatbelt)
+[![OWASP LLM](https://img.shields.io/badge/OWASP_LLM-Top_10-purple)]()
+[![RBAC](https://img.shields.io/badge/RBAC-casbin-orange)]()
 
 > **Part of the MCP Security Platform.** Scan before you trust with [mcp-observatory](https://github.com/KryptosAI/mcp-observatory) (144★), then enforce at runtime with mcp-seatbelt.
 
@@ -32,6 +32,8 @@ AI coding agents (Cursor, Claude, VS Code, ChatGPT, Windsurf, and others) connec
 
 ## What It Does
 
+### Detection & Proxy
+
 - **Detects MCP configs across 8 clients** — Automatically discovers MCP server configurations from Cursor, Claude Desktop, VS Code (user + workspace), ChatGPT Desktop, Codex, JetBrains IDEs (IntelliJ, PyCharm, WebStorm, etc.), Windsurf, and project-local files (`.mcp.json`, `.mcp/config.json`). No manual wiring required.
 
 - **Runtime proxy with policy enforcement** — Starts a transparent JSON-RPC 2.0 proxy on port 9420. Every tool call, resource access, and prompt request is intercepted, evaluated against your policy, and allowed, denied, warned, or redacted. Three modes: `default-deny` (zero-trust), `allowlist` (whitelist known-good), and `audit` (log only, no blocking).
@@ -44,6 +46,19 @@ AI coding agents (Cursor, Claude, VS Code, ChatGPT, Windsurf, and others) connec
 
 - **Per-call timeouts** — Hung tool calls are killed and return a clean JSON-RPC error instead of a raw 503. Configurable per-rule (10s for shell commands, 60s for safe tools).
 
+### Advanced Security
+
+- **OWASP LLM Top 10 mapping** — Every blocked call is tagged with OWASP categories (LLM01 Prompt Injection, LLM06 Excessive Agency, etc.)
+- **Compliance framework mapping** — Policy rules carry SOC2, HIPAA, GDPR, ISO 27001, and PCI-DSS control tags
+- **Multi-step attack chain detection** — XState-based state machine tracks call sequences: recon → execution → persistence → exfiltration
+- **Honeytoken injection & detection** — Plants decoy credentials (AWS keys, GitHub tokens, DB URLs) in tool responses, alerts on access
+- **Forensic session capture** — Records full request/response pairs as `.mcpcap.json` for incident analysis
+- **Schema-aware argument validation** — Validates tool arguments against declared JSON Schemas, detects path traversal and injection
+- **Threat intelligence integration** — Queries ThreatFox IOC database for IP/domain reputation checks
+- **Input fuzzing** — Generates edge-case payloads against policy rules to find bypasses
+- **Role-based access control** — Per-agent permissions with casbin. Admin can execute all tools, agents get scoped access
+- **Response DLP** — Scans upstream responses for secret patterns (API keys, tokens, private keys) and redacts them
+
 ---
 
 ## Quick Start
@@ -55,6 +70,12 @@ npx mcp-seatbelt dashboard     # view live stats at http://localhost:9421
 ```
 
 On first run, `init` creates `.mcp-seatbelt/policy.yml` (your editable ruleset) and `.mcp-seatbelt/risk-report.md` (a summary of every server and its risk flags). The proxy starts in `audit` mode by default — observe actual tool usage, then switch to `enforce` when ready.
+
+```bash
+mcp-seatbelt fuzz --policy .mcp-seatbelt/policy.yml --iterations 200    # find policy bypasses
+mcp-seatbelt record --output .mcp-seatbelt/sessions                      # forensic recording mode
+mcp-seatbelt rbac-init -o .mcp-seatbelt                                  # init RBAC model + policy files
+```
 
 ### Docker
 
@@ -97,12 +118,14 @@ docker run -p 9420:9420 -v $(pwd)/.mcp-seatbelt:/app/.mcp-seatbelt ghcr.io/krypt
 
 The proxy never returns a raw upstream error to the agent. If a call exceeds its timeout, the child process is killed and the agent receives a clean error message — no 503s, no hanging connections.
 
+Every request flows through an **11-stage pipeline**: RBAC → Schema Validation → Path Safety → Policy Engine → Threat Intel → Honeytokens → Attack Chains → Proxy → Response DLP → Forensics → Audit Log.
+
 ---
 
 ## Comparison
 
 | Feature | mcp-seatbelt | mcp-firewall | mcp-guardian | Prismor | mcp-proxy |
-|---|---|---|---|---|---|
+|---|---|---|---|---|---|---|
 | Runtime blocking | ✓ | ✓ | ✓ | ✓ | ✗ |
 | Pre-install scanning | ✓ | ✗ | ✗ | ✗ | ✗ |
 | 8+ client detection | ✓ | ✗ | ✗ | ✗ | ✗ |
@@ -112,6 +135,13 @@ The proxy never returns a raw upstream error to the agent. If a call exceeds its
 | SARIF / GitHub Code Scanning | ✓ | ✗ | ✗ | ✗ | ✗ |
 | mcp-observatory integration | ✓ | ✗ | ✗ | ✗ | ✗ |
 | Per-call timeouts | ✓ | ✗ | ✗ | ✗ | ✗ |
+| OWASP LLM Top 10 mapping | ✓ | ✗ | ✗ | ✗ | ✗ |
+| Compliance tagging (SOC2/HIPAA) | ✓ | ✗ | ✗ | ✗ | ✗ |
+| Attack chain detection | ✓ | ✗ | ✗ | ✗ | ✗ |
+| Honeytoken/injection detection | ✓ | ✗ | ✗ | ✗ | ✗ |
+| Schema-aware validation | ✓ | ✗ | ✗ | ✗ | ✗ |
+| Threat intel (IOC lookup) | ✓ | ✗ | ✗ | ✗ | ✗ |
+| RBAC (per-agent access) | ✓ | ✗ | ✗ | ✗ | ✗ |
 
 Seatbelt is the only tool that combines pre-install scanning with runtime enforcement, covers all major AI agent clients, redacts credential arguments inline, and bridges static analysis results from mcp-observatory into live policy rules.
 
@@ -156,6 +186,19 @@ mcp-seatbelt check                    # exit 1 if critical risks found
 mcp-seatbelt diff old.yml new.yml     # compare two policy files
 mcp-seatbelt import-observatory       # convert observatory findings to rules
 ```
+
+### New Commands (v0.4.0)
+
+| Command | Description |
+|---------|-------------|
+| `mcp-seatbelt fuzz` | Fuzz a policy against tool schemas to find bypasses |
+| `mcp-seatbelt record` | Start proxy in forensic recording mode |
+| `mcp-seatbelt rbac-init` | Initialize RBAC model and policy files |
+| `mcp-seatbelt simulate` | Simulate a tool call against the policy and show evaluation trace |
+| `mcp-seatbelt benchmark` | Run performance benchmarks against the proxy |
+| `mcp-seatbelt test-policy` | Run policy tests from a test YAML file |
+| `mcp-seatbelt baseline` | Generate a behavioral baseline from audit logs |
+| `mcp-seatbelt verify-audit` | Verify signed audit log integrity |
 
 ### Built-in Rules (Default Policy)
 
@@ -288,6 +331,14 @@ The observatory bridge (`mergeObservatoryPolicy`) can merge findings into an exi
 - [x] SARIF 2.1.0 and markdown report generation
 - [x] mcp-observatory integration bridge
 - [x] CI/CD check command (`mcp-seatbelt check`)
+- [x] OWASP LLM Top 10 mapping and compliance framework tagging
+- [x] Multi-step attack chain detection (XState state machine)
+- [x] Honeytoken injection and detection
+- [x] Forensic session capture (.mcpcap.json)
+- [x] Schema-aware argument validation
+- [x] Threat intelligence integration (ThreatFox IOC lookup)
+- [x] Input fuzzing against policy rules
+- [x] Role-based access control (casbin RBAC)
 - [ ] Policy diff and migration tooling ([#12](https://github.com/KryptosAI/mcp-seatbelt/issues/12))
 - [ ] Prometheus `/metrics` endpoint for observability stacks ([#15](https://github.com/KryptosAI/mcp-seatbelt/issues/15))
 - [ ] OPA/Rego policy integration ([#18](https://github.com/KryptosAI/mcp-seatbelt/issues/18))
@@ -301,7 +352,7 @@ The observatory bridge (`mergeObservatoryPolicy`) can merge findings into an exi
 
 See [`CONTRIBUTING.md`](./CONTRIBUTING.md) for development setup, testing instructions, and pull request guidelines. Security issues should follow the process in [`SECURITY.md`](./SECURITY.md).
 
-- **212 tests** across 6 test suites (CLI, detectors, policy engine, proxy server, proxy interception, reports)
+- **485 tests** across 18 test suites (CLI, detectors, policy engine, proxy server, proxy interception, reports, security modules, RBAC, threat intel, LLM judge, forensics, honeytokens, attack chains, schema validator, audit, notifications, baseline, integration)
 - `npm test` runs the full Vitest suite; `npm run typecheck` verifies TypeScript
 - PRs should include tests for new rules, detectors, or policy features
 

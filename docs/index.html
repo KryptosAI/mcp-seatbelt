@@ -6,7 +6,7 @@
 <meta name="description" content="MCP Security Platform — Scan Before You Trust. Enforce at Runtime. The only open-source platform that secures MCP servers from install to runtime.">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0%25' y1='0%25' x2='100%25' y2='100%25'%3E%3Cstop offset='0%25' style='stop-color:%233b82f6'/%3E%3Cstop offset='100%25' style='stop-color:%238b5cf6'/%3E%3C/linearGradient%3E%3C/defs%3E%3Cpath d='M16 2L4 7v10c0 7.6 5.1 14.7 12 16 6.9-1.3 12-8.4 12-16V7L16 2z' fill='url(%23g)'/%3E%3Cpath d='M11 16l3 3 7-7' fill='none' stroke='%23fff' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
 <meta property="og:title" content="MCP Security Platform — Scan Before You Trust. Enforce at Runtime.">
-<meta property="og:description" content="Open-source MCP security scanning (mcp-observatory) and runtime enforcement (mcp-seatbelt). 686 tests. 30+ CLI commands. MIT licensed.">
+<meta property="og:description" content="Open-source MCP security scanning (mcp-observatory) and runtime enforcement (mcp-seatbelt). 959 tests. 38+ CLI commands. MIT licensed.">
 <meta property="og:image" content="https://kryptosai.github.io/mcp-seatbelt/demo.gif">
 <meta property="og:image:width" content="1050">
 <meta property="og:image:height" content="650">
@@ -15,7 +15,7 @@
 <meta property="og:type" content="website">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="MCP Security Platform — Scan Before You Trust. Enforce at Runtime.">
-<meta name="twitter:description" content="Open-source MCP security scanning (mcp-observatory) and runtime enforcement (mcp-seatbelt). 686 tests. 30+ CLI commands. MIT licensed.">
+<meta name="twitter:description" content="Open-source MCP security scanning (mcp-observatory) and runtime enforcement (mcp-seatbelt). 959 tests. 38+ CLI commands. MIT licensed.">
 <meta name="twitter:image" content="https://kryptosai.github.io/mcp-seatbelt/demo.gif">
 <title>MCP Security Platform — Scan Before You Trust. Enforce at Runtime.</title>
 <style>
@@ -470,7 +470,7 @@ code, pre, .mono {
     <a href="https://github.com/KryptosAI/mcp-seatbelt" target="_blank" rel="noopener" class="btn btn-secondary">GitHub →</a>
     <a href="https://github.com/KryptosAI/mcp-observatory" target="_blank" rel="noopener" class="btn btn-secondary">Observatory →</a>
   </div>
-  <p style="color:var(--text-muted);font-size:0.82rem;margin-bottom:32px;">Built with TypeScript · MIT Licensed · 686 tests · Zero Dependencies</p>
+  <p style="color:var(--text-muted);font-size:0.82rem;margin-bottom:32px;">Built with TypeScript · MIT Licensed · 959 tests · Zero Dependencies</p>
   <div class="demo-container">
     <img src="demo.gif" alt="MCP Security Platform demo" loading="lazy">
   </div>
@@ -535,17 +535,21 @@ code, pre, .mono {
       <div class="card-tag card-tag-purple">RUNTIME ENFORCEMENT</div>
       <h3>mcp-seatbelt</h3>
       <div class="card-subtitle">Runtime Proxy &amp; Policy Engine</div>
-      <p class="card-description">Detect MCP configs across 8 clients. Proxy with default-deny policy. 13 risk rules. 7 policy rules. Argument redaction. Circuit breaker.</p>
+      <p class="card-description">Detect MCP configs across 8 clients. Proxy with 11-stage security pipeline. 13 risk rules. Policy engine. RBAC. Schema validation. Threat intel. Honeytokens. Attack chain detection. Forensic capture.</p>
       <ul class="card-features">
+        <li>OWASP LLM Top 10 &amp; compliance tagging</li>
         <li>Live dashboard for real-time monitoring</li>
         <li>Learning mode — auto-generate policies</li>
-        <li>Time-windowed policy rules</li>
-        <li>Policy inheritance &amp; composition</li>
+        <li>Honeytoken injection &amp; detection</li>
+        <li>Attack chain state machine</li>
+        <li>Forensic session capture (.mcpcap)</li>
+        <li>Input fuzzing against policy rules</li>
         <li><code>npx @kryptosai/mcp-seatbelt</code></li>
       </ul>
       <div class="card-stats">
-        <div class="card-stat"><strong>212</strong> tests</div>
-        <div class="card-stat"><strong>7</strong> CLI commands</div>
+        <div class="card-stat"><strong>485</strong> tests</div>
+        <div class="card-stat"><strong>18</strong> test files</div>
+        <div class="card-stat"><strong>16</strong> CLI commands</div>
       </div>
       <div style="display:flex;gap:8px;margin-bottom:18px;flex-wrap:wrap;">
         <img src="https://img.shields.io/github/stars/KryptosAI/mcp-seatbelt?style=flat-square&color=8b5cf6" alt="GitHub stars for mcp-seatbelt" loading="lazy">
@@ -579,12 +583,12 @@ code, pre, .mono {
     </div>
 
     <div class="flow-box flow-box-right">
-      <h4>🛡 SEATBELT <span style="font-weight:400;font-size:0.8rem;color:var(--text-muted);">Runtime</span></h4>
+      <h4>🛡 SEATBELT <span style="font-weight:400;font-size:0.8rem;color:var(--text-muted);">Runtime · 11-stage pipeline</span></h4>
       <ul class="flow-steps">
-        <li><span class="flow-step-num">5</span> Intercept Calls</li>
-        <li><span class="flow-step-num">6</span> Evaluate Policy</li>
-        <li><span class="flow-step-num">7</span> Allow / Deny / Redact</li>
-        <li><span class="flow-step-num">8</span> Live Dashboard</li>
+        <li><span class="flow-step-num">5</span> RBAC → Schema → Policy</li>
+        <li><span class="flow-step-num">6</span> Threat Intel → Honeytokens</li>
+        <li><span class="flow-step-num">7</span> Attack Chains → DLP</li>
+        <li><span class="flow-step-num">8</span> Forensics → Live Dashboard</li>
       </ul>
     </div>
   </div>
@@ -663,6 +667,55 @@ code, pre, .mono {
           <td class="check">✓</td>
           <td class="check">✓</td>
         </tr>
+        <tr>
+          <td>OWASP LLM Top 10 mapping</td>
+          <td class="check">✓</td>
+          <td class="cross">✗</td>
+          <td class="cross">✗</td>
+          <td class="cross">✗</td>
+        </tr>
+        <tr>
+          <td>Compliance tagging (SOC2/HIPAA)</td>
+          <td class="check">✓</td>
+          <td class="cross">✗</td>
+          <td class="cross">✗</td>
+          <td class="cross">✗</td>
+        </tr>
+        <tr>
+          <td>Attack chain detection</td>
+          <td class="check">✓</td>
+          <td class="cross">✗</td>
+          <td class="cross">✗</td>
+          <td class="cross">✗</td>
+        </tr>
+        <tr>
+          <td>Honeytoken/injection detection</td>
+          <td class="check">✓</td>
+          <td class="cross">✗</td>
+          <td class="cross">✗</td>
+          <td class="cross">✗</td>
+        </tr>
+        <tr>
+          <td>Schema-aware validation</td>
+          <td class="check">✓</td>
+          <td class="cross">✗</td>
+          <td class="cross">✗</td>
+          <td class="cross">✗</td>
+        </tr>
+        <tr>
+          <td>Threat intel (IOC lookup)</td>
+          <td class="check">✓</td>
+          <td class="cross">✗</td>
+          <td class="cross">✗</td>
+          <td class="cross">✗</td>
+        </tr>
+        <tr>
+          <td>RBAC (per-agent access)</td>
+          <td class="check">✓</td>
+          <td class="cross">✗</td>
+          <td class="cross">✗</td>
+          <td class="cross">✗</td>
+        </tr>
       </tbody>
     </table>
   </div>
@@ -735,7 +788,7 @@ code, pre, .mono {
 <div class="stats-bar">
   <div class="stats-grid" id="statsGrid">
     <div class="stat-box">
-      <div class="stat-box-number" data-target="686" data-prefix="474 + 212 = ">474 + 212 = 686</div>
+      <div class="stat-box-number" data-target="959" data-prefix="474 + 485 = ">474 + 485 = 959</div>
       <div class="stat-box-label">Tests</div>
     </div>
     <div class="stat-box">
@@ -743,11 +796,11 @@ code, pre, .mono {
       <div class="stat-box-label">Client Detectors</div>
     </div>
     <div class="stat-box">
-      <div class="stat-box-number" data-target="20" data-suffix="+">20+</div>
+      <div class="stat-box-number" data-target="27" data-suffix="+">27+</div>
       <div class="stat-box-label">Security Rules</div>
     </div>
     <div class="stat-box">
-      <div class="stat-box-number" data-target="29" data-suffix="+">29+</div>
+      <div class="stat-box-number" data-target="38" data-suffix="+">38+</div>
       <div class="stat-box-label">CLI Commands</div>
     </div>
     <div class="stat-box">
