@@ -54,6 +54,8 @@ On first run, `init` creates `.mcp-seatbelt/policy.yml` (your editable ruleset) 
 
 ### Docker
 
+Images are automatically built and published on every release via GitHub Actions.
+
 ```bash
 docker run -p 9420:9420 -v $(pwd)/.mcp-seatbelt:/app/.mcp-seatbelt ghcr.io/kryptosai/mcp-seatbelt:latest proxy
 ```
