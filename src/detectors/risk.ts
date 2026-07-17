@@ -1,4 +1,5 @@
 import type { McpServerConfig, RiskAssessment, RiskFlag } from "../types.js";
+import { mapRiskToOWASP } from "../owasp-mapping.js";
 
 const RISK_RULES: {
   check: (srv: McpServerConfig) => boolean;
@@ -133,10 +134,12 @@ export function assessRisk(server: McpServerConfig): RiskAssessment {
 
   for (const rule of RISK_RULES) {
     if (rule.check(server)) {
+      const owaspTags = mapRiskToOWASP(rule.rule);
       flags.push({
         rule: rule.rule,
         description: rule.description,
         severity: rule.severity,
+        ...(owaspTags.length > 0 ? { owasp: owaspTags } : {}),
       });
     }
   }

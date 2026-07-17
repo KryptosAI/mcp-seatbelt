@@ -13,6 +13,12 @@ import {
   scanResponse,
 } from './intercept.js';
 import type { McpServerConfig, PolicyConfig, ProxyStats, ProxyServerOptions } from '../types.js';
+import { trackCall } from '../security/attack-chains.js';
+import { validateToolArgs, validatePathSafety } from '../security/schema-validator.js';
+import { checkAccess } from '../policy/rbac.js';
+import { checkThreatIntel, type ThreatIntelResult } from '../policy/threat-intel.js';
+import { injectHoneytokens, detectHoneytokenAccess } from '../security/honeytokens.js';
+import { captureRequest, captureResponse } from '../security/forensics.js';
 
 export interface RegisteredServer {
   name: string;
@@ -523,6 +529,8 @@ export class ProxyServer {
   private rateLimitWindow: number = 60000;
   private dlp: boolean;
   private defaultTimeoutMs: number;
+  private injectHoneytokensFlag: boolean;
+  private forensicsCaptureFlag: boolean;
   private rateLimits: Map<string, RateLimitEntry> = new Map();
   private circuits: Map<string, CircuitBreakerState> = new Map();
   private readonly CIRCUIT_THRESHOLD = 5;
@@ -542,6 +550,8 @@ export class ProxyServer {
     this.rateLimitMax = options?.rateLimit ?? 100;
     this.dlp = options?.dlp ?? true;
     this.defaultTimeoutMs = options?.defaultTimeoutMs ?? 30000;
+    this.injectHoneytokensFlag = options?.injectHoneytokens ?? (policy.getConfig().mode === 'audit');
+    this.forensicsCaptureFlag = options?.forensicsCapture ?? false;
 
     this.app = express();
     this.app.use(express.json({ limit: '5mb' }));
@@ -554,6 +564,7 @@ export class ProxyServer {
       redacted: 0,
       redactedCount: 0,
       timedOut: 0,
+      honeytokenDetections: 0,
       startTime: '',
       uptime: 0,
     };
@@ -566,6 +577,14 @@ export class ProxyServer {
   reloadPolicy(newPolicyConfig: PolicyConfig): number {
     this.policy = new PolicyEngine(newPolicyConfig);
     return newPolicyConfig.rules.length;
+  }
+
+  shouldInjectHoneytokens(): boolean {
+    return this.injectHoneytokensFlag;
+  }
+
+  isForensicsCaptureEnabled(): boolean {
+    return this.forensicsCaptureFlag;
   }
 
   getLatencyStats(): LatencyStats {
@@ -850,6 +869,24 @@ export class ProxyServer {
 
       this.stats.totalRequests++;
 
+      if (this.forensicsCaptureFlag) {
+        captureRequest(mcpRequest);
+      }
+
+      if (mcpRequest.method === 'tools/call' && mcpRequest.params?.arguments) {
+        const detected = detectHoneytokenAccess(mcpRequest.params.arguments, serverName);
+        if (detected) {
+          console.error(`[mcp-seatbelt:honeytoken] ALERT: Honeytoken ${detected.id} (${detected.type}) accessed by ${serverName}!`);
+          this.stats.honeytokenDetections++;
+          res.status(403).json({
+            jsonrpc: '2.0',
+            error: { code: -32001, message: `Honeytoken detected: ${detected.type} credential was accessed. This is a decoy.` },
+            id: mcpRequest.id ?? null,
+          });
+          return;
+        }
+      }
+
       if (!mcpRequest || mcpRequest.jsonrpc !== '2.0') {
         res.status(400).json({
           jsonrpc: '2.0',
@@ -924,6 +961,89 @@ export class ProxyServer {
         return;
       }
 
+      const toolName =
+        mcpRequest.method === 'tools/call' && mcpRequest.params?.name
+          ? mcpRequest.params.name
+          : mcpRequest.method;
+
+      const chain = trackCall({
+        toolName,
+        args: mcpRequest.params?.arguments ?? {},
+        sessionId: serverName + "_" + Date.now(),
+        timestamp: Date.now(),
+      });
+
+      if (chain.alert) {
+        console.error("[mcp-seatbelt:attack-chain] Attack chain detected — escalating to deny");
+        this.stats.blocked++;
+        res.status(400).json({
+          jsonrpc: "2.0",
+          error: {
+            code: -32001,
+            message: "Blocked by MCP Seatbelt: attack chain detected — exfiltration confirmed",
+          },
+          id: mcpRequest.id ?? null,
+        });
+        return;
+      }
+
+      if (mcpRequest.method === 'tools/call' && mcpRequest.params?.name) {
+        const toolArgs = mcpRequest.params.arguments ?? {};
+        const schemaResult = validateToolArgs(mcpRequest.params.name, toolArgs);
+        if (!schemaResult.valid) {
+          res.status(400).json({
+            jsonrpc: "2.0",
+            error: { code: -32602, message: `Schema validation failed: ${schemaResult.errors.join("; ")}` },
+            id: mcpRequest.id ?? null,
+          });
+          return;
+        }
+
+        const pathResult = validatePathSafety(toolArgs as Record<string, unknown>);
+        if (!pathResult.safe) {
+          res.status(400).json({
+            jsonrpc: "2.0",
+            error: { code: -32001, message: `Path safety violation: ${pathResult.violations.join("; ")}` },
+            id: mcpRequest.id ?? null,
+          });
+          return;
+        }
+      }
+
+      const agentId = (req.headers['x-agent-id'] as string) || 'unknown_agent';
+      const hasAccess = await checkAccess(agentId, toolName, 'execute');
+      if (!hasAccess) {
+        this.stats.blocked++;
+        res.status(403).json({
+          jsonrpc: '2.0',
+          error: {
+            code: -32001,
+            message: `RBAC denied: agent '${agentId}' cannot execute '${toolName}'`,
+          },
+          id: mcpRequest.id ?? null,
+        });
+        return;
+      }
+
+      if (mcpRequest.method === 'tools/call' && mcpRequest.params?.arguments) {
+        const tiResults = await checkThreatIntel(mcpRequest.params.arguments as Record<string, unknown>);
+        if (tiResults.some((r: ThreatIntelResult) => r.malicious)) {
+          const malicious = tiResults.filter((r: ThreatIntelResult) => r.malicious);
+          console.warn(`[mcp-seatbelt:threat-intel] Blocked ${toolName}: ${malicious.map((r: ThreatIntelResult) => `${r.queryType}=${r.queryValue}`).join(", ")}`);
+          this.stats.blocked++;
+          res.status(403).json({
+            jsonrpc: '2.0',
+            error: {
+              code: -32001,
+              message: `Blocked by threat intel: malicious indicators detected in arguments`,
+              data: { indicators: malicious.map((r) => ({ type: r.queryType, value: r.queryValue, source: r.source })) },
+            },
+            id: mcpRequest.id ?? null,
+          });
+          return;
+        }
+      }
+
       const client = this.clients.get(serverName);
       if (!client) {
         res.status(503).json({
@@ -956,6 +1076,10 @@ export class ProxyServer {
 
         this.recordSuccess(serverName);
 
+        if (this.forensicsCaptureFlag) {
+          captureResponse(upstreamResponse);
+        }
+
         if (upstreamResponse === null) {
           this.stats.allowed++;
           res.status(202).end();
@@ -974,6 +1098,16 @@ export class ProxyServer {
                 `[mcp-seatbelt:dlp] Redacted [${redaction.type}] at ${redaction.path}`,
               );
             }
+          }
+        }
+
+        if (this.injectHoneytokensFlag) {
+          const injectionResult = injectHoneytokens(finalResponse, {
+            serverName,
+            sessionId: String(mcpRequest.id ?? 'unknown'),
+          });
+          if (injectionResult.modified) {
+            console.log(`[mcp-seatbelt:honeytoken] Planted ${injectionResult.planted} honeytokens in response for ${serverName}`);
           }
         }
 

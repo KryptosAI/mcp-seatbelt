@@ -24,6 +24,8 @@ export interface RiskFlag {
   rule: string;
   description: string;
   severity: "low" | "medium" | "high" | "critical";
+  owasp?: string[];
+  compliance?: string[];
 }
 
 export interface ArgConstraint {
@@ -43,6 +45,11 @@ export interface PolicyRule {
   timeWindow?: { days?: string[]; startHour?: number; endHour?: number };
   contextCondition?: { clientIn?: string[]; maxRequestsPerMinute?: number };
   timeoutMs?: number;
+  compliance?: Array<{
+    framework: "soc2" | "hipaa" | "gdpr" | "pci-dss" | "iso27001" | "nist";
+    controls: string[];
+    remediation?: string;
+  }>;
 }
 
 export interface WebhookConfig {
@@ -108,6 +115,7 @@ export interface ProxyStats {
   redacted: number;
   redactedCount: number;
   timedOut: number;
+  honeytokenDetections: number;
   startTime: string;
   uptime: number;
 }
@@ -117,4 +125,6 @@ export interface ProxyServerOptions {
   rateLimit?: number;
   dlp?: boolean;
   defaultTimeoutMs?: number;
+  injectHoneytokens?: boolean;
+  forensicsCapture?: boolean;
 }

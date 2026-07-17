@@ -1,0 +1,5 @@
+p, admin, *, execute
+p, agent, read_only_tools, execute
+p, agent, safe_filesystem, execute
+g, cursor_admin, admin
+g, claude_safe, agent

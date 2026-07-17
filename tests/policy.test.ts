@@ -4,6 +4,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { PolicyEngine } from '../src/policy/engine.js';
 import { DEFAULT_POLICY, DEFAULT_TEMPLATES, generateDefaultPolicyFile } from '../src/policy/defaults.js';
+import { LLMJudge } from '../src/policy/llm-judge.js';
 import { validatePolicy } from '../src/policy/schema.js';
 import { parse, stringify, parsePolicy } from '../src/policy/yaml.js';
 import type { PolicyConfig, PolicyRule } from '../src/types.js';
@@ -1036,5 +1037,259 @@ describe('argConstraints', () => {
     const engine = new PolicyEngine(makeAllowDefaultPolicy([rule]));
     const result = engine.evaluate('my_tool', '', {});
     expect(result.action).toBe('allow');
+  });
+});
+
+describe('threat-intel integration', () => {
+  it('evaluateWithJudge passes when args have no IPs or domains', async () => {
+    const engine = new PolicyEngine(makeAllowDefaultPolicy([]));
+    const result = await engine.evaluateWithJudge('read_file', 'reads files', {
+      filePath: '/tmp/test.txt',
+    });
+    expect(result.action).toBe('allow');
+  });
+
+  it('evaluateWithJudge warns when suspicious IP detected in args', async () => {
+    const engine = new PolicyEngine(makeAllowDefaultPolicy([]));
+    const result = await engine.evaluateWithJudge('connect', 'connects to host', {
+      host: '8.8.8.8',
+    });
+    expect(['allow', 'warn']).toContain(result.action);
+  });
+
+  it('evaluateWithJudge handles domain-like args', async () => {
+    const engine = new PolicyEngine(makeAllowDefaultPolicy([]));
+    const result = await engine.evaluateWithJudge('fetch', 'fetches url', {
+      url: 'example.com',
+    });
+    expect(['allow', 'warn']).toContain(result.action);
+  });
+
+  it('evaluateWithJudge works with LLM judge and threat intel simultaneously', async () => {
+    const engine = new PolicyEngine(makeAllowDefaultPolicy([]));
+    engine.setJudge(new LLMJudge());
+    const result = await engine.evaluateWithJudge('safe_tool', 'safe tool', {
+      input: 'hello world',
+    });
+    expect(['allow', 'warn']).toContain(result.action);
+  });
+});
+
+describe('compliance field validation', () => {
+  it('accepts valid compliance entries on a rule', () => {
+    const rule: PolicyRule = {
+      id: 'compliant-rule',
+      description: 'Has valid compliance',
+      target: 'command',
+      match: 'exact',
+      values: ['test'],
+      action: 'deny',
+      compliance: [
+        { framework: 'soc2', controls: ['CC6.1'] },
+      ],
+    };
+    const config = makeEnforcePolicy([rule]);
+    expect(() => validatePolicy(config)).not.toThrow();
+  });
+
+  it('accepts multiple compliance frameworks on a rule', () => {
+    const rule: PolicyRule = {
+      id: 'multi-compliance',
+      description: 'Multiple compliance',
+      target: 'command',
+      match: 'exact',
+      values: ['test'],
+      action: 'deny',
+      compliance: [
+        { framework: 'soc2', controls: ['CC6.1', 'CC6.6'] },
+        { framework: 'hipaa', controls: ['164.312(a)(1)'] },
+        { framework: 'gdpr', controls: ['Art_32'] },
+      ],
+    };
+    const config = makeEnforcePolicy([rule]);
+    expect(() => validatePolicy(config)).not.toThrow();
+  });
+
+  it('accepts compliance with optional remediation', () => {
+    const rule: PolicyRule = {
+      id: 'remediation-rule',
+      description: 'Has remediation',
+      target: 'command',
+      match: 'exact',
+      values: ['test'],
+      action: 'deny',
+      compliance: [
+        { framework: 'iso27001', controls: ['A.9.4'], remediation: 'Restrict shell access via policy' },
+      ],
+    };
+    const config = makeEnforcePolicy([rule]);
+    expect(() => validatePolicy(config)).not.toThrow();
+  });
+
+  it('accepts all valid framework types', () => {
+    const frameworks = ['soc2', 'hipaa', 'gdpr', 'pci-dss', 'iso27001', 'nist'] as const;
+    const rule: PolicyRule = {
+      id: 'all-frameworks',
+      description: 'All compliance frameworks',
+      target: 'command',
+      match: 'exact',
+      values: ['test'],
+      action: 'deny',
+      compliance: frameworks.map((fw) => ({ framework: fw, controls: ['CONTROL-1'] })),
+    };
+    const config = makeEnforcePolicy([rule]);
+    expect(() => validatePolicy(config)).not.toThrow();
+  });
+
+  it('throws for invalid framework name', () => {
+    const rule: PolicyRule = {
+      id: 'bad-framework',
+      description: 'Bad framework',
+      target: 'command',
+      match: 'exact',
+      values: ['test'],
+      action: 'deny',
+      compliance: [
+        { framework: 'bad-framework' as any, controls: ['X'] },
+      ],
+    };
+    const config = makeEnforcePolicy([rule]);
+    expect(() => validatePolicy(config)).toThrow('framework');
+  });
+
+  it('throws for empty controls array', () => {
+    const rule: PolicyRule = {
+      id: 'empty-controls',
+      description: 'Empty controls',
+      target: 'command',
+      match: 'exact',
+      values: ['test'],
+      action: 'deny',
+      compliance: [
+        { framework: 'soc2', controls: [] },
+      ],
+    };
+    const config = makeEnforcePolicy([rule]);
+    expect(() => validatePolicy(config)).toThrow('controls must be a non-empty array');
+  });
+
+  it('throws when compliance is not an array', () => {
+    const rule = {
+      id: 'bad-compliance',
+      description: 'Bad compliance',
+      target: 'command',
+      match: 'exact',
+      values: ['test'],
+      action: 'deny',
+      compliance: 'not-an-array',
+    };
+    const config = makeEnforcePolicy([rule as any]);
+    expect(() => validatePolicy(config)).toThrow('compliance must be an array');
+  });
+
+  it('throws for non-string control values', () => {
+    const rule: PolicyRule = {
+      id: 'bad-control',
+      description: 'Bad control',
+      target: 'command',
+      match: 'exact',
+      values: ['test'],
+      action: 'deny',
+      compliance: [
+        { framework: 'soc2', controls: [123 as any] },
+      ],
+    };
+    const config = makeEnforcePolicy([rule]);
+    expect(() => validatePolicy(config)).toThrow('controls must contain only non-empty strings');
+  });
+
+  it('throws for empty string control', () => {
+    const rule: PolicyRule = {
+      id: 'empty-control-str',
+      description: 'Empty control string',
+      target: 'command',
+      match: 'exact',
+      values: ['test'],
+      action: 'deny',
+      compliance: [
+        { framework: 'soc2', controls: [''] },
+      ],
+    };
+    const config = makeEnforcePolicy([rule]);
+    expect(() => validatePolicy(config)).toThrow('controls must contain only non-empty strings');
+  });
+
+  it('throws when remediation is not a string', () => {
+    const rule: PolicyRule = {
+      id: 'bad-remediation',
+      description: 'Bad remediation',
+      target: 'command',
+      match: 'exact',
+      values: ['test'],
+      action: 'deny',
+      compliance: [
+        { framework: 'soc2', controls: ['CC6.1'], remediation: 123 as any },
+      ],
+    };
+    const config = makeEnforcePolicy([rule]);
+    expect(() => validatePolicy(config)).toThrow('remediation must be a string');
+  });
+});
+
+describe('default policy compliance mappings', () => {
+  it('block-shell-execution has soc2, hipaa, gdpr compliance', () => {
+    const rule = DEFAULT_POLICY.rules.find((r) => r.id === 'block-shell-execution');
+    expect(rule).toBeDefined();
+    const compliance = rule!.compliance;
+    expect(compliance).toBeDefined();
+    expect(compliance!.some((c) => c.framework === 'soc2')).toBe(true);
+    expect(compliance!.some((c) => c.framework === 'hipaa')).toBe(true);
+    expect(compliance!.some((c) => c.framework === 'gdpr')).toBe(true);
+    const soc2 = compliance!.find((c) => c.framework === 'soc2')!;
+    expect(soc2.controls).toContain('CC6.1');
+    expect(soc2.controls).toContain('CC6.6');
+    expect(soc2.controls).toContain('CC7.2');
+  });
+
+  it('block-sensitive-paths has soc2, hipaa, iso27001 compliance', () => {
+    const rule = DEFAULT_POLICY.rules.find((r) => r.id === 'block-sensitive-paths');
+    expect(rule).toBeDefined();
+    const compliance = rule!.compliance;
+    expect(compliance).toBeDefined();
+    expect(compliance!.some((c) => c.framework === 'soc2')).toBe(true);
+    expect(compliance!.some((c) => c.framework === 'hipaa')).toBe(true);
+    expect(compliance!.some((c) => c.framework === 'iso27001')).toBe(true);
+  });
+
+  it('block-credential-access has soc2 and iso27001 compliance', () => {
+    const rule = DEFAULT_POLICY.rules.find((r) => r.id === 'block-credential-access');
+    expect(rule).toBeDefined();
+    const compliance = rule!.compliance;
+    expect(compliance).toBeDefined();
+    expect(compliance!.some((c) => c.framework === 'soc2')).toBe(true);
+    expect(compliance!.some((c) => c.framework === 'iso27001')).toBe(true);
+  });
+
+  it('block-private-network has soc2 and hipaa compliance', () => {
+    const rule = DEFAULT_POLICY.rules.find((r) => r.id === 'block-private-network');
+    expect(rule).toBeDefined();
+    const compliance = rule!.compliance;
+    expect(compliance).toBeDefined();
+    expect(compliance!.some((c) => c.framework === 'soc2')).toBe(true);
+    expect(compliance!.some((c) => c.framework === 'hipaa')).toBe(true);
+  });
+
+  it('pci-compliance template rules have pci-dss framework', () => {
+    const tmpl = DEFAULT_TEMPLATES['pci-compliance'];
+    const pciRules = tmpl.rules.filter((r) => r.compliance?.some((c) => c.framework === 'pci-dss'));
+    expect(pciRules.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('block-shell-execution soc2 controls are correct', () => {
+    const rule = DEFAULT_TEMPLATES['pci-compliance'].rules.find((r) => r.id === 'block-credential-access');
+    expect(rule).toBeDefined();
+    const pci = rule!.compliance!.find((c) => c.framework === 'pci-dss');
+    expect(pci).toBeDefined();
+    expect(pci!.controls).toContain('7.2.1');
   });
 });

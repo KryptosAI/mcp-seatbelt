@@ -16,6 +16,7 @@ vi.mock('node:os', async (importOriginal) => {
 import { homedir } from 'node:os';
 import { detectAll, detectByClient } from '../src/detectors/index.js';
 import { assessRisk } from '../src/detectors/risk.js';
+import { OWASP_LLM_MAPPING, mapRiskToOWASP } from '../src/owasp-mapping.js';
 import type { McpServerConfig } from '../src/types.js';
 
 function writeJson(filePath: string, data: unknown): void {
@@ -354,6 +355,167 @@ describe('assessRisk', () => {
     expect(ruleNames).toContain('privilege-escalation');
     expect(ruleNames).toContain('network-transport');
     expect(ruleNames).toContain('sensitive-env');
+  });
+});
+
+describe('OWASP LLM Mapping', () => {
+  it('maps shell-interpreter to LLM06 Excessive Agency', () => {
+    expect(mapRiskToOWASP('shell-interpreter')).toEqual(['LLM06']);
+  });
+
+  it('maps destructive-fs to LLM06 Excessive Agency', () => {
+    expect(mapRiskToOWASP('destructive-fs')).toEqual(['LLM06']);
+  });
+
+  it('maps no-sandbox to LLM06 Excessive Agency', () => {
+    expect(mapRiskToOWASP('no-sandbox')).toEqual(['LLM06']);
+  });
+
+  it('maps sensitive-env to LLM02 Sensitive Information Disclosure', () => {
+    expect(mapRiskToOWASP('sensitive-env')).toEqual(['LLM02']);
+  });
+
+  it('maps remote-access to LLM08 Vector Embedding Weaknesses', () => {
+    expect(mapRiskToOWASP('remote-access')).toEqual(['LLM08']);
+  });
+
+  it('maps network-tool to LLM06 Excessive Agency', () => {
+    expect(mapRiskToOWASP('network-tool')).toEqual(['LLM06']);
+  });
+
+  it('maps package-runner to LLM09 Supply Chain Vulnerabilities', () => {
+    expect(mapRiskToOWASP('package-runner')).toEqual(['LLM09']);
+  });
+
+  it('maps risky-package to LLM09 Supply Chain Vulnerabilities', () => {
+    expect(mapRiskToOWASP('risky-package')).toEqual(['LLM09']);
+  });
+
+  it('maps privilege-escalation to LLM04 Model Denial of Service', () => {
+    expect(mapRiskToOWASP('privilege-escalation')).toEqual(['LLM04']);
+  });
+
+  it('maps docker-container to LLM06 Excessive Agency', () => {
+    expect(mapRiskToOWASP('docker-container')).toEqual(['LLM06']);
+  });
+
+  it('maps network-transport to LLM03 Training Data Poisoning', () => {
+    expect(mapRiskToOWASP('network-transport')).toEqual(['LLM03']);
+  });
+
+  it('maps process-spawn to LLM06 Excessive Agency', () => {
+    expect(mapRiskToOWASP('process-spawn')).toEqual(['LLM06']);
+  });
+
+  it('maps sensitive-paths to LLM02 Sensitive Information Disclosure', () => {
+    expect(mapRiskToOWASP('sensitive-paths')).toEqual(['LLM02']);
+  });
+
+  it('returns empty array for unknown risk rule IDs', () => {
+    expect(mapRiskToOWASP('nonexistent-rule')).toEqual([]);
+  });
+
+  it('returns empty array for empty string', () => {
+    expect(mapRiskToOWASP('')).toEqual([]);
+  });
+
+  it('OWASP mapping has entries for all known risk rules', () => {
+    const knownRules = [
+      'shell-interpreter', 'destructive-fs', 'no-sandbox', 'sensitive-env',
+      'remote-access', 'network-tool', 'package-runner', 'risky-package',
+      'privilege-escalation', 'docker-container', 'network-transport',
+      'process-spawn', 'sensitive-paths',
+    ];
+    for (const rule of knownRules) {
+      expect(OWASP_LLM_MAPPING[rule], `Missing OWASP mapping for ${rule}`).toBeDefined();
+    }
+  });
+
+  it('assessRisk attaches OWASP tags to risk flags', () => {
+    const server: McpServerConfig = {
+      name: 'test-server',
+      command: 'bash',
+      args: ['-c', 'echo hi'],
+      transport: 'stdio',
+      risk: { score: 0, level: 'low', flags: [] },
+    };
+
+    const risk = assessRisk(server);
+    const shellFlag = risk.flags.find((f) => f.rule === 'shell-interpreter');
+    expect(shellFlag).toBeDefined();
+    expect(shellFlag!.owasp).toEqual(['LLM06']);
+  });
+
+  it('assessRisk omits owasp when no mapping exists', () => {
+    const server: McpServerConfig = {
+      name: 'remote-server',
+      command: 'my-app',
+      args: ['--url', 'https://api.example.com'],
+      transport: 'http',
+      url: 'https://api.example.com',
+      risk: { score: 0, level: 'low', flags: [] },
+    };
+
+    const risk = assessRisk(server);
+    const transportFlag = risk.flags.find((f) => f.rule === 'network-transport');
+    expect(transportFlag).toBeDefined();
+    expect(transportFlag!.owasp).toEqual(['LLM03']);
+
+    const remoteFlag = risk.flags.find((f) => f.rule === 'remote-access');
+    expect(remoteFlag).toBeDefined();
+    expect(remoteFlag!.owasp).toEqual(['LLM08']);
+  });
+
+  it('assessRisk does not include owasp for rules without mapping', () => {
+    const server: McpServerConfig = {
+      name: 'regular-server',
+      command: 'my-safe-app',
+      args: [],
+      transport: 'stdio',
+      risk: { score: 0, level: 'low', flags: [] },
+    };
+
+    const risk = assessRisk(server);
+    for (const flag of risk.flags) {
+      if (!OWASP_LLM_MAPPING[flag.rule]) {
+        expect(flag.owasp).toBeUndefined();
+      }
+    }
+  });
+});
+
+describe('OWASP and compliance on RiskFlag', () => {
+  it('OWASP tag is properly structured', () => {
+    const server: McpServerConfig = {
+      name: 'docker-privileged',
+      command: 'docker',
+      args: ['run', '--privileged', '--network=host', 'image'],
+      transport: 'stdio',
+      risk: { score: 0, level: 'low', flags: [] },
+    };
+
+    const risk = assessRisk(server);
+    const dockerFlag = risk.flags.find((f) => f.rule === 'docker-container');
+    expect(dockerFlag).toBeDefined();
+    expect(dockerFlag!.owasp).toEqual(['LLM06']);
+    expect(dockerFlag!.severity).toBe('high');
+    expect(dockerFlag!.rule).toBe('docker-container');
+  });
+
+  it('multiple OWASP tags can be present when applicable', () => {
+    const server: McpServerConfig = {
+      name: 'dangerous',
+      command: 'bash',
+      args: ['-c', 'rm -rf /tmp/data'],
+      transport: 'stdio',
+      risk: { score: 0, level: 'low', flags: [] },
+    };
+
+    const risk = assessRisk(server);
+    const shellFlag = risk.flags.find((f) => f.rule === 'shell-interpreter');
+    const destructiveFlag = risk.flags.find((f) => f.rule === 'destructive-fs');
+    expect(shellFlag!.owasp).toEqual(['LLM06']);
+    expect(destructiveFlag!.owasp).toEqual(['LLM06']);
   });
 });
 

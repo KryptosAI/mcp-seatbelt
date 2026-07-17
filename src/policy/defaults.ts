@@ -34,6 +34,11 @@ export const DEFAULT_POLICY: PolicyConfig = {
       ],
       action: 'deny',
       timeoutMs: 10000,
+      compliance: [
+        { framework: 'soc2', controls: ['CC6.1', 'CC6.6', 'CC7.2'] },
+        { framework: 'hipaa', controls: ['164.312(a)(1)'] },
+        { framework: 'gdpr', controls: ['Art_32'] },
+      ],
     },
     {
       id: 'block-sensitive-paths',
@@ -56,6 +61,11 @@ export const DEFAULT_POLICY: PolicyConfig = {
         '^%ProgramFiles%',
       ],
       action: 'deny',
+      compliance: [
+        { framework: 'soc2', controls: ['CC6.1', 'CC6.8'] },
+        { framework: 'hipaa', controls: ['164.312(a)(1)'] },
+        { framework: 'iso27001', controls: ['A.9.4'] },
+      ],
     },
     {
       id: 'block-credential-access',
@@ -64,6 +74,10 @@ export const DEFAULT_POLICY: PolicyConfig = {
       match: 'contains',
       values: ['password', 'secret', 'token', 'api_key', 'credential', 'private key'],
       action: 'deny',
+      compliance: [
+        { framework: 'soc2', controls: ['CC6.1'] },
+        { framework: 'iso27001', controls: ['A.9.2'] },
+      ],
     },
     {
       id: 'redact-credentials',
@@ -92,6 +106,10 @@ export const DEFAULT_POLICY: PolicyConfig = {
         '\\b127\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\b',
       ],
       action: 'deny',
+      compliance: [
+        { framework: 'soc2', controls: ['CC6.6'] },
+        { framework: 'hipaa', controls: ['164.312(e)(1)'] },
+      ],
     },
     {
       id: 'block-process-execution',
@@ -157,6 +175,10 @@ export const DEFAULT_POLICY: PolicyConfig = {
   // LLM completions from the AI client. Blocking would break most MCP server
   // functionality. Set to false in high-security environments where server-
   // initiated LLM calls are an exfiltration concern.
+  //
+  // honeytokens — When mode is "audit", honeytoken injection is enabled by default
+  // (plants decoy credentials in responses to detect exfiltration). Disabled
+  // automatically in "enforce" mode unless explicitly enabled via --inject-honeytokens.
   allowSampling: true,
 };
 
@@ -232,10 +254,13 @@ export const DEFAULT_TEMPLATES: Record<string, PolicyConfig> = {
         target: 'command',
         match: 'contains',
         values: ['password', 'secret', 'token', 'api_key', 'credential', 'private key'],
-        action: 'deny',
-      },
-      {
-        id: 'block-cardholder-data-paths',
+          action: 'deny',
+          compliance: [
+            { framework: 'pci-dss', controls: ['7.2.1', '7.2.2'] },
+          ],
+        },
+        {
+          id: 'block-cardholder-data-paths',
         description: 'Block access to paths containing cardholder data per PCI DSS',
         target: 'file',
         match: 'pattern',
@@ -247,10 +272,13 @@ export const DEFAULT_TEMPLATES: Record<string, PolicyConfig> = {
           '\\bccv\\b',
           '\\btrack[_\\-]?[12]\\b',
         ],
-        action: 'deny',
-      },
-      {
-        id: 'block-pan-patterns',
+          action: 'deny',
+          compliance: [
+            { framework: 'pci-dss', controls: ['3.4', '3.4.1'] },
+          ],
+        },
+        {
+          id: 'block-pan-patterns',
         description: 'Block card PAN patterns (Luhn-able number sequences)',
         target: 'command',
         match: 'pattern',
@@ -258,10 +286,13 @@ export const DEFAULT_TEMPLATES: Record<string, PolicyConfig> = {
           '\\b[45]\\d{3}[\\s\\-]?\\d{4}[\\s\\-]?\\d{4}[\\s\\-]?\\d{4}\\b',
           '\\b3\\d{3}[\\s\\-]?\\d{6}[\\s\\-]?\\d{5}\\b',
         ],
-        action: 'deny',
-      },
-      {
-        id: 'block-audit-trail-tampering',
+          action: 'deny',
+          compliance: [
+            { framework: 'pci-dss', controls: ['3.4', '3.4.1'] },
+          ],
+        },
+        {
+          id: 'block-audit-trail-tampering',
         description: 'Block modification of audit trails and log files per PCI DSS Requirement 10',
         target: 'file',
         match: 'pattern',
@@ -271,6 +302,9 @@ export const DEFAULT_TEMPLATES: Record<string, PolicyConfig> = {
           '\\baccess[_\\-]?log\\b',
         ],
         action: 'deny',
+        compliance: [
+          { framework: 'pci-dss', controls: ['10.1', '10.2', '10.5'] },
+        ],
       },
     ],
     allowlist: {

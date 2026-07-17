@@ -6,6 +6,7 @@ import { resolve, dirname, isAbsolute } from 'node:path';
 import { validatePolicy } from './schema.js';
 import type { AuditTrail, AuditEntryInput } from '../audit.js';
 import type { JudgeResult } from './llm-judge.js';
+import { checkThreatIntel } from './threat-intel.js';
 
 export interface EvaluateResult {
   action: 'allow' | 'deny' | 'warn' | 'redact';
@@ -325,6 +326,12 @@ export class PolicyEngine {
     context?: EvaluateContext,
   ): Promise<EvaluateResult> {
     const result = this.evaluate(toolName, toolDescription, args, context);
+
+    const tiResults = await checkThreatIntel(args);
+    if (tiResults.some((r) => r.malicious)) {
+      result.reasons.push('[threat-intel] Known malicious indicator detected in arguments');
+      if (result.action === 'allow') result.action = 'warn';
+    }
 
     if (!this.judgeImpl || result.action === 'deny') {
       return result;

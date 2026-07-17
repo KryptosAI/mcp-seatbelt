@@ -13,7 +13,7 @@ interface DashboardStats {
   uptime: number;
   startTime: string;
   connectedClients: string[];
-  recentBlockedCalls: { tool: string; server: string; reason: string; time: string; args?: string }[];
+  recentBlockedCalls: { tool: string; server: string; reason: string; time: string; args?: string; owasp?: string[]; compliance?: string[] }[];
   latency?: { p50: number; p95: number; p99: number; avg: number; max: number; count: number; throughput: number };
 }
 
@@ -34,13 +34,15 @@ export function updateDashboardStats(stats: Partial<DashboardStats>): void {
   currentStats.uptime = Date.now() - new Date(currentStats.startTime).getTime();
 }
 
-export function addBlockedCall(tool: string, server: string, reason: string, args?: string): void {
+export function addBlockedCall(tool: string, server: string, reason: string, args?: string, owasp?: string[], compliance?: string[]): void {
   currentStats.recentBlockedCalls.unshift({
     tool,
     server,
     reason,
     time: new Date().toISOString(),
     args,
+    owasp,
+    compliance,
   });
   if (currentStats.recentBlockedCalls.length > 50) {
     currentStats.recentBlockedCalls = currentStats.recentBlockedCalls.slice(0, 50);
@@ -64,17 +66,27 @@ function renderDashboardPage(): string {
     ? currentStats.recentBlockedCalls
       .slice(0, 20)
       .map(
-        (call) => `
+        (call) => {
+          const owaspTags = call.owasp && call.owasp.length > 0
+            ? call.owasp.map((o) => `<span class="badge badge-owasp">${escapeHtml(o)}</span>`).join(" ")
+            : `<span class="dim">—</span>`;
+          const complianceTags = call.compliance && call.compliance.length > 0
+            ? call.compliance.map((c) => `<span class="badge badge-compliance">${escapeHtml(c)}</span>`).join(" ")
+            : `<span class="dim">—</span>`;
+          return `
     <tr>
       <td class="mono">${escapeHtml(call.tool)}</td>
       <td>${escapeHtml(call.server)}</td>
       <td class="dim">${escapeHtml(call.reason.slice(0, 80))}</td>
+      <td>${owaspTags}</td>
+      <td>${complianceTags}</td>
       <td class="dim">${new Date(call.time).toLocaleTimeString()}</td>
       <td><button class="simulate-btn" onclick="simulateBlock('${escapeHtml(call.tool)}', '${escapeHtml(call.server)}')" title="Simulate this call">▶</button></td>
-    </tr>`,
+    </tr>`;
+        },
       )
       .join("\n")
-    : `<tr><td colspan="5" class="dim" style="text-align:center">No blocked calls recorded</td></tr>`;
+    : `<tr><td colspan="7" class="dim" style="text-align:center">No blocked calls recorded</td></tr>`;
 
   const clientsHtml = currentStats.connectedClients.length > 0
     ? currentStats.connectedClients
@@ -134,6 +146,8 @@ function renderDashboardPage(): string {
     display: inline-block; background: var(--surface); border: 1px solid var(--border);
     padding: 4px 10px; border-radius: 12px; font-size: 12px; margin: 2px;
   }
+  .badge-owasp { background: rgba(239, 68, 68, 0.15); border-color: rgba(239, 68, 68, 0.3); color: #fca5a5; }
+  .badge-compliance { background: rgba(88, 166, 255, 0.15); border-color: rgba(88, 166, 255, 0.3); color: #58a6ff; }
   .status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 8px; }
   .status-dot.running { background: var(--green); }
   .status-dot.stopped { background: var(--red); }
@@ -247,6 +261,8 @@ function renderDashboardPage(): string {
         <th>Tool</th>
         <th>Server</th>
         <th>Reason</th>
+        <th>OWASP</th>
+        <th>Compliance</th>
         <th>Time</th>
         <th>Sim</th>
       </tr>

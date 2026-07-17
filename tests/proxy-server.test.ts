@@ -3,6 +3,7 @@ import http from 'node:http';
 import { ProxyServer, StdioClient, HttpClient, SseClient } from '../src/proxy/server.js';
 import { PolicyEngine } from '../src/policy/engine.js';
 import type { PolicyConfig, McpServerConfig } from '../src/types.js';
+import { checkAccess } from '../src/policy/rbac.js';
 
 function makePolicyConfig(rules: any[] = []): PolicyConfig {
   return {
@@ -964,5 +965,22 @@ describe('Per-rule timeout overrides', () => {
 
     const defaultResult = engine.getEffectiveTimeout('other_tool', '', {});
     expect(defaultResult).toBe(5000);
+  });
+});
+
+describe('RBAC integration', () => {
+  it('checkAccess allows all when enforcer is not initialized', async () => {
+    const result = await checkAccess('any_agent', 'bash', 'execute');
+    expect(result).toBe(true);
+  });
+
+  it('checkAccess allows read_file for any agent (no enforcer)', async () => {
+    const result = await checkAccess('unknown_agent', 'read_file', 'execute');
+    expect(result).toBe(true);
+  });
+
+  it('checkAccess allows wildcard tool for any agent (no enforcer)', async () => {
+    const result = await checkAccess('test_agent', '*', 'execute');
+    expect(result).toBe(true);
   });
 });

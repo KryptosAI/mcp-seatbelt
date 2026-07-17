@@ -9,3 +9,7 @@ export {
   scanResponse,
 } from "./intercept.js";
 export type { MCPRequest, MCPResponse, RedactionLog, ScanResult } from "./intercept.js";
+export { injectHoneytokens, detectHoneytokenAccess, getDetectionLog, getPlantedCount, getDetectedCount } from "../security/honeytokens.js";
+export type { Honeytoken, InjectOptions } from "../security/honeytokens.js";
+export { startSessionCapture, captureRequest, captureResponse, saveSession, stopSessionCapture } from "../security/forensics.js";
+export type { ForensicEvent, SessionCapture } from "../security/forensics.js";

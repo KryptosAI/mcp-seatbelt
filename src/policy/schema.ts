@@ -253,6 +253,8 @@ function validateRule(rule: unknown, index: number): asserts rule is PolicyRule 
   }
 
   validateTimeoutMs(r.timeoutMs, `Policy rule[${index}].timeoutMs`);
+
+  validateCompliance(r.compliance, index);
 }
 
 function validateTimeoutMs(value: unknown, field: string): void {
@@ -265,5 +267,34 @@ function validateTimeoutMs(value: unknown, field: string): void {
   }
   if (value > 300000) {
     throw new Error(`${field} must be at most 300000ms (5 minutes)`);
+  }
+}
+
+const VALID_FRAMEWORKS = ['soc2', 'hipaa', 'gdpr', 'pci-dss', 'iso27001', 'nist'] as const;
+
+function validateCompliance(input: unknown, ruleIndex: number): void {
+  if (input === undefined || input === null) return;
+  if (!Array.isArray(input)) {
+    throw new Error(`Policy rule[${ruleIndex}].compliance must be an array`);
+  }
+  for (let ci = 0; ci < input.length; ci++) {
+    const item = (input as Array<Record<string, unknown>>)[ci];
+    if (!item || typeof item !== 'object') {
+      throw new Error(`Policy rule[${ruleIndex}].compliance[${ci}] must be a non-null object`);
+    }
+    if (!VALID_FRAMEWORKS.includes(item.framework as typeof VALID_FRAMEWORKS[number])) {
+      throw new Error(
+        `Policy rule[${ruleIndex}].compliance[${ci}].framework must be one of ${VALID_FRAMEWORKS.join(', ')}, got ${JSON.stringify(item.framework)}`,
+      );
+    }
+    if (!Array.isArray(item.controls) || item.controls.length === 0) {
+      throw new Error(`Policy rule[${ruleIndex}].compliance[${ci}].controls must be a non-empty array`);
+    }
+    if (!item.controls.every((c: unknown) => typeof c === 'string' && c.trim() !== '')) {
+      throw new Error(`Policy rule[${ruleIndex}].compliance[${ci}].controls must contain only non-empty strings`);
+    }
+    if (item.remediation !== undefined && typeof item.remediation !== 'string') {
+      throw new Error(`Policy rule[${ruleIndex}].compliance[${ci}].remediation must be a string`);
+    }
   }
 }

@@ -157,6 +157,38 @@ program
   });
 
 program
+  .command("record")
+  .description("Start the proxy in forensic recording mode (captures all requests/responses)")
+  .option("-p, --port <port>", "Proxy port", "9420")
+  .option("-c, --config <path>", "Policy config path", ".mcp-seatbelt/policy.yml")
+  .option("-o, --output <path>", "Session output directory", ".mcp-seatbelt/sessions")
+  .action(async (opts) => {
+    const { startSessionCapture, saveSession, setSessionDir } = await import("./security/forensics.js");
+    setSessionDir(opts.output as string);
+    const sessionId = await startSessionCapture();
+    console.log(`Recording session ${sessionId}...`);
+
+    process.on("SIGINT", async () => {
+      const file = await saveSession();
+      console.log(`\nSession saved to ${file}`);
+      process.exit(0);
+    });
+    process.on("SIGTERM", async () => {
+      const file = await saveSession();
+      console.log(`\nSession saved to ${file}`);
+      process.exit(0);
+    });
+
+    const { proxyCommand } = await import("./commands/proxy.js");
+    await proxyCommand({
+      port: opts.port as string,
+      config: opts.config as string,
+      dlp: true,
+      watch: false,
+    });
+  });
+
+program
   .command("benchmark")
   .description("Run performance benchmarks against the proxy")
   .option("-p, --port <port>", "Proxy port", "9420")
@@ -209,6 +241,32 @@ program
     });
   });
 
+program
+  .command("fuzz")
+  .description("Fuzz a policy against tool schemas to find bypasses")
+  .requiredOption("--policy <path>", "Path to policy YAML file")
+  .option("--iterations <n>", "Fuzz iterations per tool", "100")
+  .option("--json", "Output machine-readable JSON")
+  .action(async (opts) => {
+    const { fuzzCommand } = await import("./commands/fuzz.js");
+    await fuzzCommand({
+      policy: opts.policy as string,
+      iterations: parseInt(opts.iterations, 10) || 100,
+      json: Boolean(opts.json),
+    });
+  });
+
+program
+  .command("rbac-init")
+  .description("Initialize RBAC model and policy files")
+  .option("-o, --output <path>", "Output directory", ".mcp-seatbelt")
+  .action(async (opts) => {
+    const { rbacInitCommand } = await import("./commands/rbac-init.js");
+    await rbacInitCommand({
+      output: opts.output as string,
+    });
+  });
+
 program.parse();
 
 export { ProxyServer, interceptRequest, filterToolsListResponse, filterResourcesListResponse, filterPromptsListResponse, scanResponse, SseClient } from './proxy/index.js';
@@ -222,4 +280,16 @@ export { DEFAULT_POLICY, DEFAULT_TEMPLATES, generateDefaultPolicy, generateDefau
 export { detectAll, parseMcpServers } from './detectors/index.js';
 export { assessRisk } from './detectors/risk.js';
 export { AuditTrail } from './audit.js';
+export { initRBAC, checkAccess, getEnforcer } from './policy/rbac.js';
+export { checkThreatIntel, clearCache as clearThreatIntelCache } from './policy/threat-intel.js';
+export { OWASP_LLM_MAPPING, mapRiskToOWASP, OWASP_LLM_TAXONOMY_ENTRIES, COMPLIANCE_TAXONOMY_ENTRIES } from './owasp-mapping.js';
+export { trackCall, cleanupSession, getSessionCount } from './security/attack-chains.js';
+export type { CallEvent } from './security/attack-chains.js';
+export { compileToolSchema, validateToolArgs, validatePathSafety, clearSchemaCache, getSchemaCount } from './security/schema-validator.js';
+export { injectHoneytokens, detectHoneytokenAccess, getDetectionLog, getPlantedCount, getDetectedCount, clearHoneytokens } from './security/honeytokens.js';
+export type { Honeytoken, InjectOptions } from './security/honeytokens.js';
+export { startSessionCapture, captureRequest, captureResponse, saveSession, stopSessionCapture, getActiveSession, setSessionDir, getSessionDir } from './security/forensics.js';
+export type { ForensicEvent, SessionCapture } from './security/forensics.js';
+export { fuzzTool, fuzzServer } from './security/fuzzer.js';
+export type { FuzzResult } from './security/fuzzer.js';
 export * from './types.js';

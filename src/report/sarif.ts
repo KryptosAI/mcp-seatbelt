@@ -1,5 +1,6 @@
 import type { McpClientConfig, RiskFlag } from "../types.js";
 import { assessRisk } from "../detectors/risk.js";
+import { OWASP_LLM_TAXONOMY_ENTRIES, COMPLIANCE_TAXONOMY_ENTRIES } from "../owasp-mapping.js";
 
 export interface SARIFLog {
   version: "2.1.0";
@@ -18,6 +19,22 @@ interface SARIFRun {
   };
   results: SARIFResult[];
   artifacts: SARIFArtifact[];
+  taxonomies?: SARIFTaxonomy[];
+}
+
+interface SARIFTaxonomy {
+  name: string;
+  version?: string;
+  organization?: string;
+  shortDescription: { text: string };
+  taxa: SARIFTaxon[];
+}
+
+interface SARIFTaxon {
+  id: string;
+  name: string;
+  shortDescription?: { text: string };
+  properties?: Record<string, string>;
 }
 
 interface SARIFRule {
@@ -220,6 +237,30 @@ export function generateSarifReport(configs: McpClientConfig[]): SARIFLog {
         },
         results,
         artifacts,
+        taxonomies: [
+          {
+            name: "OWASP LLM Top 10",
+            version: "1.0",
+            organization: "OWASP",
+            shortDescription: { text: "OWASP Top 10 for LLM Applications" },
+            taxa: OWASP_LLM_TAXONOMY_ENTRIES.map((entry) => ({
+              id: entry.id,
+              name: entry.title,
+              shortDescription: { text: `${entry.id}: ${entry.title}` },
+              properties: { severity: entry.severity },
+            })),
+          },
+          {
+            name: "Compliance Frameworks",
+            shortDescription: { text: "Compliance framework mappings" },
+            taxa: COMPLIANCE_TAXONOMY_ENTRIES.map((entry) => ({
+              id: entry.id,
+              name: entry.title,
+              shortDescription: { text: `${entry.id}: ${entry.title}` },
+              properties: { framework: entry.framework },
+            })),
+          },
+        ],
       },
     ],
   };

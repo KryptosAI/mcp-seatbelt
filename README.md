@@ -5,6 +5,9 @@
 [![CI](https://github.com/KryptosAI/mcp-seatbelt/actions/workflows/mcp-seatbelt.yml/badge.svg)](https://github.com/KryptosAI/mcp-seatbelt/actions/workflows/mcp-seatbelt.yml)
 [![npm version](https://img.shields.io/npm/v/mcp-seatbelt?color=blue)](https://www.npmjs.com/package/mcp-seatbelt)
 [![All Contributors](https://img.shields.io/badge/all_contributors-1-orange.svg?style=flat-square)](#contributors)
+[![OWASP](https://img.shields.io/badge/OWASP-LLM%20Top%2010-red)](https://owasp.org/www-project-top-10-for-large-language-model-applications/)
+[![Casbin](https://img.shields.io/badge/Casbin-RBAC-blue)](https://casbin.org/)
+[![ThreatFox](https://img.shields.io/badge/ThreatFox-IOC-black)](https://threatfox.abuse.ch/)
 [![Docker](https://img.shields.io/badge/docker-ghcr.io%2Fkryptosai%2Fmcp--seatbelt-blue)](https://github.com/KryptosAI/mcp-seatbelt/pkgs/container/mcp-seatbelt)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
 [![Node: ≥22](https://img.shields.io/badge/node-%E2%89%A522-339933)](https://nodejs.org)
@@ -111,6 +114,33 @@ The proxy never returns a raw upstream error to the agent. If a call exceeds its
 | Per-call timeouts | ✓ | ✗ | ✗ | ✗ | ✗ |
 
 Seatbelt is the only tool that combines pre-install scanning with runtime enforcement, covers all major AI agent clients, redacts credential arguments inline, and bridges static analysis results from mcp-observatory into live policy rules.
+
+---
+
+## Advanced Security Features
+
+mcp-seatbelt includes a defense-in-depth security pipeline that evaluates every tool call through multiple layers:
+
+| Layer | Feature | Description |
+|---|---|---|
+| 1 | **RBAC** | Casbin-based role-based access control for agents and tools. `mcp-seatbelt rbac-init` generates model and policy files. |
+| 2 | **Schema Validation** | AJV-based JSON Schema validation of tool arguments against compiled schemas. |
+| 3 | **Path Safety** | Detects path traversal, null-byte injection, and sensitive path access in arguments. |
+| 4 | **Policy Engine** | Rule-based evaluation with regex/exact/contains matching, time windows, context conditions, and arg constraints. |
+| 5 | **Threat Intel** | Async ThreatFox IOC lookup for IPs and domains in tool arguments. |
+| 6 | **Honeytokens** | Plants decoy credentials in responses; detects exfiltration when honeytokens appear in subsequent calls. |
+| 7 | **Attack Chain Tracking** | XState-based state machine tracking multi-step attack patterns (recon→execution→persistence→exfiltration). |
+| 8 | **Forensic Capture** | Records all requests and responses in signed `.mcpcap.json` session files when enabled. |
+| 9 | **Response DLP** | Scans upstream responses for secret patterns (API keys, tokens, private keys) and redacts them. |
+| 10 | **Input Fuzzing** | Generates edge-case payloads from JSON schemas and tests policy bypass resilience. `mcp-seatbelt fuzz --policy policy.yml` |
+
+### Input Fuzzing
+
+`mcp-seatbelt fuzz` generates randomized tool call arguments using `json-schema-faker`, injects edge-case payloads (path traversal, command injection, SQL injection, Log4Shell), and evaluates each payload against your policy. Bypasses are reported with the specific payload and rule that should have blocked them.
+
+```bash
+mcp-seatbelt fuzz --policy .mcp-seatbelt/policy.yml --iterations 200 --json
+```
 
 ---
 
