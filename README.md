@@ -12,7 +12,7 @@
 [![OWASP LLM](https://img.shields.io/badge/OWASP_LLM-Top_10-purple)]()
 [![RBAC](https://img.shields.io/badge/RBAC-casbin-orange)]()
 
-> **Part of the MCP Security Platform.** Scan before you trust with [mcp-observatory](https://github.com/KryptosAI/mcp-observatory) (144★), then enforce at runtime with mcp-seatbelt.
+> **Part of the MCP Security Platform.** Scan before you trust with [mcp-observatory](https://github.com/KryptosAI/mcp-observatory) (236★), then enforce at runtime with mcp-seatbelt. 📄 [Read the technical whitepaper](marketing/whitepaper.md).
 
 🌐 **Website:** [kryptosai.github.io/mcp-seatbelt](https://kryptosai.github.io/mcp-seatbelt/) — demo, comparison, pricing
 
@@ -64,7 +64,8 @@ AI coding agents (Cursor, Claude, VS Code, ChatGPT, Windsurf, and others) connec
 ## Quick Start
 
 ```bash
-npx mcp-seatbelt init          # scan all clients, assess risk, generate policy
+npm install -g @kryptosai/mcp-seatbelt  # or: brew install mcp-seatbelt
+npx @kryptosai/mcp-seatbelt init        # scan all clients, assess risk, generate policy
 npx mcp-seatbelt proxy         # start the enforcing proxy on port 9420
 npx mcp-seatbelt dashboard     # view live stats at http://localhost:9421
 ```

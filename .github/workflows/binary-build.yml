@@ -1,0 +1,37 @@
+name: Binary Build
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+            target: linux-x64
+          - os: macos-latest
+            target: macos-arm64
+          - os: windows-latest
+            target: windows-x64
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - run: npm ci && npm run build
+
+      - name: Package binary
+        run: |
+          npx pkg dist/index.js --target node22-${{ matrix.target }} --output mcp-seatbelt-${{ matrix.target }}
+          chmod +x mcp-seatbelt-${{ matrix.target }}
+
+      - name: Upload binary to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: mcp-seatbelt-${{ matrix.target }}
