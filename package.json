@@ -31,6 +31,8 @@
     "fuzz": "tsx src/index.ts fuzz",
     "record": "tsx src/index.ts record",
     "rbac:init": "tsx src/index.ts rbac-init",
+    "docker:build": "docker build -t ghcr.io/kryptosai/mcp-seatbelt:latest .",
+    "docker:push": "docker push ghcr.io/kryptosai/mcp-seatbelt:latest",
     "prepublishOnly": "npm run build && npm test"
   },
   "keywords": [
