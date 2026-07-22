@@ -832,6 +832,16 @@ export class ProxyServer {
       });
     });
 
+    this.app.get('/servers', (_req: Request, res: Response) => {
+      res.json({
+        servers: this.registeredServers.map((s) => ({
+          name: s.name,
+          proxyUrl: s.proxyUrl,
+          risk: s.risk,
+        })),
+      });
+    });
+
     this.app.post('/:serverName', async (req: Request, res: Response) => {
       const startNs = process.hrtime.bigint();
       res.on('finish', () => this.recordRequestTiming(startNs));

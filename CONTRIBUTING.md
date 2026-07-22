@@ -84,6 +84,7 @@ mcp-seatbelt/
 │   └── integrations/       # External tool bridges
 │       └── observatory.ts  # mcp-observatory bridge
 ├── tests/                  # Vitest test suite (18 files, 485 tests)
+├── scripts/                # Benchmark harness (run-benchmarks.ts, bench-*.ts)
 ├── templates/              # Policy template shipped with the package
 └── .github/workflows/      # CI/CD (GitHub Actions)
 ```

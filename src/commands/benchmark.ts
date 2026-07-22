@@ -5,6 +5,7 @@ export interface BenchmarkOptions {
   requests: number;
   concurrency: number;
   warmup: number;
+  server?: string;
 }
 
 interface BenchmarkResult {
@@ -92,39 +93,26 @@ export async function benchmarkCommand(opts: BenchmarkOptions): Promise<void> {
     process.exit(1);
   }
 
-  const response = await fetch(`http://localhost:${port}/health`);
-  const health = await response.json() as { stats: { allowed: number; blocked: number } };
-  const initialAllowed = health.stats.allowed;
-
-  if (warmup > 0) {
-    console.log(chalk.dim(`Warming up with ${warmup} requests...`));
-    const warmupName = `bench-warmup-${Date.now()}`;
-
-    const warmupMock = await fetch(`http://localhost:${port}/${warmupName}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        method: "tools/call",
-        params: { name: "warmup", arguments: {} },
-        id: 1,
-      }),
-    });
-    const warmupBody = await warmupMock.json();
-
-    if (warmupBody?.error?.code === -32601) {
-      console.log(chalk.yellow("No registered MCP servers found on proxy. Run mcp-seatbelt proxy first to register real servers.\n"));
-      console.log(chalk.dim("Benchmark uses registered MCP servers. To test raw proxy throughput, register at least one server.\n"));
-      process.exit(1);
+  let serverName = opts.server;
+  if (!serverName) {
+    try {
+      const serversResponse = await fetch(`http://localhost:${port}/servers`);
+      const serversBody = await serversResponse.json() as { servers?: Array<{ name: string }> };
+      serverName = serversBody.servers?.[0]?.name;
+    } catch {
+      // fall through to error below
     }
-
-    await runBatch(port, warmupName, "warmup", warmup, concurrency);
-    console.log(chalk.dim("Warmup complete.\n"));
   }
 
-  const benchName = `bench-${Date.now()}`;
+  if (!serverName) {
+    console.error(chalk.red("No registered MCP servers found on proxy."));
+    console.error(chalk.dim("Start the proxy with at least one registered server, or pass --server <name>.\n"));
+    process.exit(1);
+  }
 
-  await fetch(`http://localhost:${port}/${benchName}`, {
+  console.log(chalk.dim(`Benchmarking server: ${serverName}\n`));
+
+  const probe = await fetch(`http://localhost:${port}/${serverName}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -133,12 +121,29 @@ export async function benchmarkCommand(opts: BenchmarkOptions): Promise<void> {
       params: { name: "bench", arguments: {} },
       id: 1,
     }),
-  }).catch(() => {});
+  });
+  const probeBody = await probe.json() as { error?: { code?: number } };
+
+  if (probeBody?.error?.code === -32601) {
+    console.error(chalk.red(`Server "${serverName}" is not registered on this proxy.`));
+    console.error(chalk.dim("Check http://localhost:" + port + "/servers for registered names, or pass --server <name>.\n"));
+    process.exit(1);
+  }
+
+  const response = await fetch(`http://localhost:${port}/health`);
+  const health = await response.json() as { stats: { allowed: number; blocked: number } };
+  const initialAllowed = health.stats.allowed;
+
+  if (warmup > 0) {
+    console.log(chalk.dim(`Warming up with ${warmup} requests...`));
+    await runBatch(port, serverName, "warmup", warmup, concurrency);
+    console.log(chalk.dim("Warmup complete.\n"));
+  }
 
   console.log(chalk.bold(`Running ${requests} requests with ${concurrency} concurrent...`));
 
   const startWall = Date.now();
-  const latencies = await runBatch(port, benchName, "bench", requests, concurrency);
+  const latencies = await runBatch(port, serverName, "bench", requests, concurrency);
   const elapsedSec = (Date.now() - startWall) / 1000;
 
   const stats = computeStats(latencies);
@@ -153,7 +158,8 @@ export async function benchmarkCommand(opts: BenchmarkOptions): Promise<void> {
 
   const finalResponse = await fetch(`http://localhost:${port}/health`);
   const finalHealth = await finalResponse.json() as { stats: { allowed: number } };
-  const processedByProxy = finalHealth.stats.allowed - initialAllowed;
-  console.log(chalk.dim(`Proxy processed ${processedByProxy} requests, dropped ${requests - processedByProxy} at policy layer.`));
+  const processedByProxy = finalHealth.stats.allowed - initialAllowed - warmup;
+  const dropped = Math.max(0, requests - processedByProxy);
+  console.log(chalk.dim(`Proxy processed ${processedByProxy} of ${requests} measurement requests, blocked ${dropped} at policy layer.`));
   console.log();
 }

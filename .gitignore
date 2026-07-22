@@ -2,3 +2,4 @@ node_modules
 dist
 .mcp-seatbelt
 *.log
+scripts/benchmark-results.json

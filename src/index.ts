@@ -195,6 +195,7 @@ program
   .option("-n, --requests <n>", "Number of requests to send", "1000")
   .option("-c, --concurrency <n>", "Number of concurrent requests", "10")
   .option("--warmup <n>", "Number of warmup requests before measuring", "100")
+  .option("--server <name>", "Registered server name to benchmark (auto-detected if omitted)")
   .action(async (opts) => {
     const { benchmarkCommand } = await import("./commands/benchmark.js");
     await benchmarkCommand({
@@ -202,6 +203,7 @@ program
       requests: parseInt(opts.requests, 10),
       concurrency: parseInt(opts.concurrency, 10),
       warmup: parseInt(opts.warmup, 10),
+      server: opts.server as string | undefined,
     });
   });
 

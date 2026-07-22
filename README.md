@@ -327,6 +327,26 @@ The observatory bridge (`mergeObservatoryPolicy`) can merge findings into an exi
 
 ---
 
+## Performance
+
+Measured on Apple M3, Node.js 22, macOS — 1,000 requests at concurrency 10 against an instant-response upstream (median of 3 runs, zero failed requests):
+
+| Metric | Value |
+|---|---|
+| Throughput | ~2,000 req/s (vs ~4,300 req/s direct, no proxy) |
+| End-to-end latency (p50) | ~3.9 ms (adds ~2 ms over direct) |
+| End-to-end latency (p95) | ~6.6 ms |
+| Policy evaluation (p50) | 6.6 µs (7 rules); 8.5 µs (20 rules) |
+| Policy evaluation (p95) | 7.7 µs (7 rules) |
+| DLP overhead | ~+0.1 ms per response |
+| Schema validation overhead | < 1 µs per call |
+| Memory (idle) | ~74 MB |
+| Memory (under load) | ~74 MB (flat after 10,000 requests) |
+
+Policy size (1 → 20 rules) has no measurable end-to-end impact; per-rule cost is ~0.25 µs, far below transport I/O. Full methodology and per-scenario tables: [docs/benchmarks.md](docs/benchmarks.md). Run `mcp-seatbelt benchmark` on your own hardware.
+
+---
+
 ## Enterprise
 
 [mcp-observatory Cloud](https://observatory.anomaly.ai) provides hosted dashboards, private CI scanning, certification badges, and supply-chain compliance reports for teams and organizations. Seatbelt integrates as the runtime enforcement layer — observatory validates what you install; seatbelt controls what it can do at execution time.
