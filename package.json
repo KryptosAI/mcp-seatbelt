@@ -85,6 +85,8 @@
     "xstate": "^5.32.5"
   },
   "devDependencies": {
+    "@modelcontextprotocol/server-filesystem": "^2026.7.10",
+    "@modelcontextprotocol/server-memory": "^2026.7.4",
     "@types/express": "^4.17.21",
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^22.0.0",

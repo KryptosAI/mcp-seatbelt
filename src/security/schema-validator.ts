@@ -1,22 +1,40 @@
 import Ajv, { type ValidateFunction } from "ajv";
+import { createHash } from "node:crypto";
 
 const ajv = new Ajv({ allErrors: true, strict: false });
 
-const validatorCache = new Map<string, ValidateFunction>();
+interface CachedValidator {
+  hash: string;
+  validate: ValidateFunction;
+}
+
+// Keyed by tool name; the stored hash lets us skip recompilation when the
+// same schema is re-registered and recompile when the schema actually changed.
+const validatorCache = new Map<string, CachedValidator>();
+
+function schemaHash(schema: object): string {
+  return createHash("sha1").update(JSON.stringify(schema)).digest("hex");
+}
 
 export function compileToolSchema(toolName: string, schema: object): void {
   try {
+    const hash = schemaHash(schema);
+    const existing = validatorCache.get(toolName);
+    if (existing && existing.hash === hash) {
+      return;
+    }
     const validate = ajv.compile(schema);
-    validatorCache.set(toolName, validate);
+    validatorCache.set(toolName, { hash, validate });
   } catch (err) {
     console.error(`[mcp-seatbelt:schema] Invalid schema for tool '${toolName}': ${err instanceof Error ? err.message : 'Unknown error'}`);
   }
 }
 
 export function validateToolArgs(toolName: string, args: unknown): { valid: boolean; errors: string[] } {
-  const validate = validatorCache.get(toolName);
-  if (!validate) return { valid: true, errors: [] };
+  const entry = validatorCache.get(toolName);
+  if (!entry) return { valid: true, errors: [] };
 
+  const { validate } = entry;
   const valid = validate(args);
   const errors: string[] = [];
 

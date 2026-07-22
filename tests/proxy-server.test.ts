@@ -395,6 +395,18 @@ describe('ProxyServer', () => {
 // --- StdioClient ---
 
 describe('StdioClient', () => {
+  // Track every client so afterEach can stop them even when an assertion
+  // fails mid-test; otherwise a leaked child can receive a late write and
+  // surface an unhandled EPIPE during teardown.
+  let clients: StdioClient[] = [];
+
+  afterEach(() => {
+    for (const client of clients) {
+      try { client.stop(); } catch {}
+    }
+    clients = [];
+  });
+
   it('sends a JSON-RPC request and receives a response', async () => {
     const echoScript = `
       const rl = require('readline').createInterface({ input: process.stdin });
@@ -410,6 +422,7 @@ describe('StdioClient', () => {
       });
     `;
     const client = new StdioClient('node', ['-e', echoScript.trim()]);
+    clients.push(client);
     await client.start();
 
     const response = await client.send({
@@ -432,6 +445,7 @@ describe('StdioClient', () => {
       require('readline').createInterface({ input: process.stdin }).on('line', () => {});
     `;
     const client = new StdioClient('node', ['-e', script.trim()]);
+    clients.push(client);
     await client.start();
 
     const response = await client.send({
@@ -445,12 +459,35 @@ describe('StdioClient', () => {
 
   it('throws when process is not running', async () => {
     const client = new StdioClient('node', ['-e', '']);
+    clients.push(client);
     await expect(client.send({ jsonrpc: '2.0', method: 'test', id: 1 })).rejects.toThrow('Process not running');
+  });
+
+  it('rejects in-flight requests when the child dies instead of throwing EPIPE', async () => {
+    const script = `setTimeout(() => {}, 60000);`;
+    const client = new StdioClient('node', ['-e', script.trim()]);
+    clients.push(client);
+    await client.start();
+
+    // Simulate a request that is still pending when the process is killed
+    // underneath it (what proxy.stop() does during teardown).
+    const pendingPromise = client.send({
+      jsonrpc: '2.0',
+      method: 'tools/list',
+      id: 99,
+    }, 5000);
+    const assertion = expect(pendingPromise).rejects.toThrow();
+
+    (client as any).child?.kill('SIGKILL');
+
+    await assertion;
+    client.stop();
   });
 
   it('rejects on request timeout', async () => {
     const script = `setTimeout(() => {}, 60000);`;
     const client = new StdioClient('node', ['-e', script.trim()]);
+    clients.push(client);
     await client.start();
 
     const promise = new Promise((resolve, reject) => {
@@ -469,6 +506,7 @@ describe('StdioClient', () => {
 
   it('stops gracefully without throwing', () => {
     const client = new StdioClient('echo', ['hi']);
+    clients.push(client);
     client.stop();
   });
 });
@@ -800,8 +838,18 @@ describe('SseClient', () => {
 // --- Per-call timeout tests ---
 
 describe('StdioClient timeout', () => {
+  let clients: StdioClient[] = [];
+
+  afterEach(() => {
+    for (const client of clients) {
+      try { client.stop(); } catch {}
+    }
+    clients = [];
+  });
+
   it('kills child process on timeout and rejects with exceeded timeout', async () => {
     const client = new StdioClient('node', ['-e', 'setTimeout(() => {}, 99999)']);
+    clients.push(client);
     await client.start();
 
     const promise = client.send({
@@ -827,6 +875,7 @@ describe('StdioClient timeout', () => {
       });
     `;
     const client = new StdioClient('node', ['-e', echoScript.trim()]);
+    clients.push(client);
     await client.start();
 
     const response = await client.send({

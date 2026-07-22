@@ -1,7 +1,8 @@
 import express, { type Request, type Response } from 'express';
 import { type ChildProcess, spawn } from 'child_process';
 import { createInterface } from 'readline';
-import type http from 'http';
+import http from 'node:http';
+import https from 'node:https';
 import { PolicyEngine } from '../policy/engine.js';
 import {
   type MCPRequest,
@@ -26,6 +27,19 @@ export interface RegisteredServer {
   proxyUrl: string;
   risk: string;
 }
+
+// Shared keep-alive connection pools for upstream HTTP(S) calls. Without an
+// explicit agent, every proxied call pays for a fresh TCP handshake.
+const HTTP_KEEPALIVE_AGENT = new http.Agent({
+  keepAlive: true,
+  maxSockets: 1024,
+  keepAliveMsecs: 30000,
+});
+const HTTPS_KEEPALIVE_AGENT = new https.Agent({
+  keepAlive: true,
+  maxSockets: 1024,
+  keepAliveMsecs: 30000,
+});
 
 export interface LatencyStats {
   p50: number;
@@ -98,6 +112,14 @@ export class StdioClient {
     this.child = spawn(this.command, this.args, {
       env: this.env,
       stdio: ['pipe', 'pipe', 'pipe'],
+    });
+
+    // A write to a dead child's stdin surfaces as an async 'error' event
+    // (EPIPE), not a synchronous throw. Without a listener, Node raises it
+    // as an uncaught exception. Swallow it here and reject pending requests
+    // cleanly instead.
+    this.child.stdin?.on('error', (err: NodeJS.ErrnoException) => {
+      this.rejectPendingOnTransportError(err);
     });
 
     const rl = createInterface({ input: this.child.stdout! });
@@ -174,13 +196,59 @@ export class StdioClient {
     });
   }
 
+  private isStdinWritable(): boolean {
+    const stdin = this.child?.stdin;
+    return (
+      !this.stopped &&
+      !!this.child &&
+      !this.child.killed &&
+      this.child.exitCode === null &&
+      this.child.signalCode === null &&
+      !!stdin &&
+      !stdin.destroyed &&
+      stdin.writable
+    );
+  }
+
+  private rejectPendingOnTransportError(err: NodeJS.ErrnoException): void {
+    // stdin is broken (e.g. EPIPE after the child died): in-flight requests
+    // can never be delivered, so reject them cleanly rather than letting the
+    // stream error escape as an uncaught exception.
+    const reason = new Error(
+      `Process not running (${err.code ?? err.message})`,
+    );
+    for (const [, pending] of this.pending) {
+      clearTimeout(pending.timer);
+      pending.reject(reason);
+    }
+    this.pending.clear();
+  }
+
+  private failPendingWrite(id: number | string, err: Error): void {
+    const pending = this.pending.get(id);
+    if (pending) {
+      clearTimeout(pending.timer);
+      this.pending.delete(id);
+      pending.reject(err);
+    }
+  }
+
   async send(request: MCPRequest, timeoutMs?: number): Promise<MCPResponse | null> {
-    if (!this.child || this.child.killed) {
+    if (!this.isStdinWritable()) {
       throw new Error('Process not running');
     }
 
+    const payload = JSON.stringify(request) + '\n';
+    const stdin = this.child!.stdin!;
+
     if (request.id === undefined || request.id === null) {
-      this.child.stdin!.write(JSON.stringify(request) + '\n');
+      try {
+        // The child may die between the writability check and the flush of
+        // this write; the callback and the stdin 'error' listener absorb it.
+        stdin.write(payload, () => {});
+      } catch {
+        // nothing pending to reject for notifications
+      }
       return null;
     }
 
@@ -209,9 +277,15 @@ export class StdioClient {
       }, effectiveTimeout);
 
       this.pending.set(id, { resolve, reject, timer });
-      if (!this.child?.stdin?.destroyed) {
-        try { this.child!.stdin!.write(JSON.stringify(request) + '\n'); }
-        catch (e: any) { if (e.code !== 'EPIPE') throw e; }
+
+      try {
+        stdin.write(payload, (err?: Error | null) => {
+          if (err) {
+            this.failPendingWrite(id, err);
+          }
+        });
+      } catch (e: any) {
+        this.failPendingWrite(id, e instanceof Error ? e : new Error(String(e)));
       }
     });
   }
@@ -231,13 +305,13 @@ export class StdioClient {
 }
 
 export class HttpClient {
-  private url: string;
-  private pendingControllers: Set<AbortController> = new Set();
+  private url: URL;
+  private inflight: Set<http.ClientRequest> = new Set();
   private stopped = false;
   timedOut = 0;
 
   constructor(url: string) {
-    this.url = url;
+    this.url = new URL(url);
   }
 
   async start(): Promise<void> {
@@ -246,43 +320,83 @@ export class HttpClient {
 
   stop(): void {
     this.stopped = true;
-    for (const controller of this.pendingControllers) {
-      controller.abort();
+    for (const req of this.inflight) {
+      req.destroy();
     }
-    this.pendingControllers.clear();
+    this.inflight.clear();
   }
 
   async send(request: MCPRequest, timeoutMs: number = 30000): Promise<MCPResponse> {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-    this.pendingControllers.add(controller);
+    const body = JSON.stringify(request);
+    const isHttps = this.url.protocol === 'https:';
+    const transport = isHttps ? https : http;
 
-    try {
-      const response = await fetch(this.url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(request),
-        signal: controller.signal,
+    return new Promise<MCPResponse>((resolve, reject) => {
+      let settled = false;
+      let didTimeOut = false;
+
+      const req = transport.request(
+        {
+          hostname: this.url.hostname,
+          port: this.url.port || (isHttps ? 443 : 80),
+          path: this.url.pathname + this.url.search,
+          method: 'POST',
+          agent: isHttps ? HTTPS_KEEPALIVE_AGENT : HTTP_KEEPALIVE_AGENT,
+          headers: {
+            'Content-Type': 'application/json',
+            'Content-Length': Buffer.byteLength(body),
+          },
+        },
+        (res) => {
+          const chunks: Buffer[] = [];
+          res.on('data', (c: Buffer) => chunks.push(c));
+          res.on('end', () => {
+            finish(() => {
+              const status = res.statusCode ?? 0;
+              if (status < 200 || status >= 300) {
+                reject(new Error(`HTTP ${status}: ${res.statusMessage}`));
+                return;
+              }
+              try {
+                resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')) as MCPResponse);
+              } catch (err) {
+                reject(err instanceof Error ? err : new Error(String(err)));
+              }
+            });
+          });
+          res.on('error', (err: Error) => {
+            finish(() => reject(err));
+          });
+        },
+      );
+
+      const finish = (fn: () => void): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        this.inflight.delete(req);
+        fn();
+      };
+
+      const timer = setTimeout(() => {
+        didTimeOut = true;
+        this.timedOut++;
+        req.destroy(new Error('request timeout'));
+      }, timeoutMs);
+
+      req.on('error', (err) => {
+        finish(() => {
+          if (didTimeOut) {
+            reject(new Error(`Call exceeded timeout (${timeoutMs}ms)`));
+          } else {
+            reject(err);
+          }
+        });
       });
 
-      clearTimeout(timeoutId);
-      this.pendingControllers.delete(controller);
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      }
-
-      return response.json() as Promise<MCPResponse>;
-    } catch (error) {
-      clearTimeout(timeoutId);
-      this.pendingControllers.delete(controller);
-
-      if (error instanceof Error && error.name === 'AbortError') {
-        this.timedOut++;
-        throw new Error(`Call exceeded timeout (${timeoutMs}ms)`);
-      }
-      throw error;
-    }
+      this.inflight.add(req);
+      req.end(body);
+    });
   }
 }
 
@@ -541,6 +655,7 @@ export class ProxyServer {
   private latencies: number[] = [];
   private readonly MAX_LATENCY_SAMPLES = 10000;
   private requestTimestamps: number[] = [];
+  private requestTimestampsStart = 0;
   private readonly THROUGHPUT_WINDOW_MS = 5000;
 
   constructor(policy: PolicyEngine, port: number = 9420, options?: ProxyServerOptions) {
@@ -554,6 +669,10 @@ export class ProxyServer {
     this.forensicsCaptureFlag = options?.forensicsCapture ?? false;
 
     this.app = express();
+    // Skip per-response ETag hashing and the X-Powered-By header; this is a
+    // localhost JSON-RPC proxy, not a cacheable web API.
+    this.app.disable('etag');
+    this.app.disable('x-powered-by');
     this.app.use(express.json({ limit: '5mb' }));
 
     this.stats = {
@@ -603,8 +722,11 @@ export class ProxyServer {
 
     const now = Date.now();
     const cutoff = now - this.THROUGHPUT_WINDOW_MS;
-    const recent = this.requestTimestamps.filter((t) => t > cutoff);
-    const throughput = recent.length / (this.THROUGHPUT_WINDOW_MS / 1000);
+    let recent = 0;
+    for (let i = this.requestTimestampsStart; i < this.requestTimestamps.length; i++) {
+      if (this.requestTimestamps[i] > cutoff) recent++;
+    }
+    const throughput = recent / (this.THROUGHPUT_WINDOW_MS / 1000);
 
     return {
       p50: parseFloat((p50 / 1_000_000).toFixed(2)),
@@ -622,14 +744,25 @@ export class ProxyServer {
     const latencyNs = Number(endNs - startNs);
 
     this.latencies.push(latencyNs);
-    if (this.latencies.length > this.MAX_LATENCY_SAMPLES) {
-      this.latencies.shift();
+    // Amortized trim: one slice every MAX samples instead of an O(n) shift()
+    // on every request once the buffer is full.
+    if (this.latencies.length > this.MAX_LATENCY_SAMPLES * 2) {
+      this.latencies = this.latencies.slice(-this.MAX_LATENCY_SAMPLES);
     }
 
-    this.requestTimestamps.push(Date.now());
-    const cutoff = Date.now() - this.THROUGHPUT_WINDOW_MS;
-    while (this.requestTimestamps.length > 0 && this.requestTimestamps[0] <= cutoff) {
-      this.requestTimestamps.shift();
+    const now = Date.now();
+    this.requestTimestamps.push(now);
+    const cutoff = now - this.THROUGHPUT_WINDOW_MS;
+    // Advance a start index instead of shift()-ing expired entries one by one.
+    while (
+      this.requestTimestampsStart < this.requestTimestamps.length &&
+      this.requestTimestamps[this.requestTimestampsStart] <= cutoff
+    ) {
+      this.requestTimestampsStart++;
+    }
+    if (this.requestTimestampsStart > 4096) {
+      this.requestTimestamps = this.requestTimestamps.slice(this.requestTimestampsStart);
+      this.requestTimestampsStart = 0;
     }
   }
 
@@ -938,11 +1071,6 @@ export class ProxyServer {
         ? this.toolDescriptions.get(mcpRequest.params.name) || ''
         : '';
 
-      const ctx = {
-        client: serverName,
-        requestCount: this.stats.totalRequests,
-      };
-
       const blockedResponse = interceptRequest(
         mcpRequest,
         this.policy,
@@ -976,10 +1104,13 @@ export class ProxyServer {
           ? mcpRequest.params.name
           : mcpRequest.method;
 
+      // Stable session per upstream server: a fresh session id per request
+      // would spawn a new xstate actor for every call (and leak it in the
+      // sessions map) while making cross-call chain detection impossible.
       const chain = trackCall({
         toolName,
         args: mcpRequest.params?.arguments ?? {},
-        sessionId: serverName + "_" + Date.now(),
+        sessionId: serverName,
         timestamp: Date.now(),
       });
 

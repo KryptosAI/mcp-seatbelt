@@ -475,6 +475,29 @@ const SECRET_PATTERNS: Array<{ type: string; pattern: RegExp }> = [
   { type: 'generic-secret', pattern: /(?:(?:secret|password|token|key|credential)[\s:=]+['"][^'"]+['"])/gi },
 ];
 
+/**
+ * Single combined pre-filter. Every detailed pattern above requires one of
+ * these literal anchors, so if none are present the string cannot contain a
+ * detectable secret and the six full scans can be skipped. Clean strings (the
+ * overwhelming majority) cost one regex test instead of six.
+ */
+const SECRET_PREFILTER = /AKIA|ghp_|sk-|-----BEGIN|api[_-]?key|apikey|api[_-]?secret|auth[_-]?token|bearer|secret|password|token|key|credential/i;
+
+const BASE64_BLOB = /^[A-Za-z0-9+/=\r\n]+$/;
+
+/**
+ * Heuristic binary detection: large strings that are pure base64 (or contain
+ * NUL bytes) are binary payloads (images, archives, key material in encoded
+ * form). Plain-text secret patterns can never match inside them, so scanning
+ * is wasted work — and it is the most expensive work DLP does.
+ */
+function isBinaryBlob(value: string): boolean {
+  if (value.includes('\u0000')) return true;
+  return BASE64_BLOB.test(value);
+}
+
+const MIN_BLOB_LENGTH = 1024;
+
 function deepScanStrings(obj: unknown, path: string, callback: (path: string, value: string) => string | undefined): unknown {
   if (typeof obj === 'string') {
     const result = callback(path, obj);
@@ -513,12 +536,23 @@ export function scanResponse(
   const redactions: RedactionLog[] = [];
 
   const redact = (path: string, value: string): string | undefined => {
+    // Skip binary payloads (base64 blobs, embedded NULs): plain-text secret
+    // patterns cannot match inside encoded data, so scanning is pure cost.
+    if (value.length >= MIN_BLOB_LENGTH && isBinaryBlob(value)) return undefined;
+
+    // Fast reject: one combined test instead of six full scans for clean text.
+    if (!SECRET_PREFILTER.test(value)) return undefined;
+
     let modified = value;
     for (const { type, pattern } of SECRET_PATTERNS) {
-      const newPattern = new RegExp(pattern.source, pattern.flags);
-      const matches = modified.match(newPattern);
+      // Reuse the module-level compiled patterns. match()/replace() reset
+      // lastIndex to 0 for /g regexes, so this is equivalent to the previous
+      // per-string clone without the allocations.
+      pattern.lastIndex = 0;
+      const matches = modified.match(pattern);
       if (matches) {
-        modified = modified.replace(newPattern, `[REDACTED-${type}]`);
+        pattern.lastIndex = 0;
+        modified = modified.replace(pattern, `[REDACTED-${type}]`);
         for (const _match of matches) {
           redactions.push({ type, path });
         }

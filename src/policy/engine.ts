@@ -53,6 +53,56 @@ export interface Deviation {
 
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
+/**
+ * Compiled, match-ready form of a single rule value. Precomputing the
+ * lowercase form (contains) and RegExp (pattern) once per rule avoids
+ * re-allocating them on every evaluate() call.
+ */
+interface CompiledValue {
+  raw: string;
+  lower: string | null;
+  regex: RegExp | null;
+}
+
+interface CompiledRule {
+  rule: PolicyRule;
+  values: CompiledValue[];
+  hits: number;
+  order: number;
+}
+
+// Shared cache so identical patterns across rules compile exactly once.
+const REGEX_CACHE = new Map<string, RegExp | null>();
+const REGEX_CACHE_MAX = 512;
+
+function getCachedRegex(source: string, flags: string): RegExp | null {
+  const key = `${flags}:${source}`;
+  const cached = REGEX_CACHE.get(key);
+  if (cached !== undefined) return cached;
+
+  let re: RegExp | null = null;
+  try {
+    re = new RegExp(source, flags);
+  } catch {
+    re = null;
+  }
+
+  if (REGEX_CACHE.size >= REGEX_CACHE_MAX) {
+    const oldest = REGEX_CACHE.keys().next();
+    if (!oldest.done) REGEX_CACHE.delete(oldest.value);
+  }
+  REGEX_CACHE.set(key, re);
+  return re;
+}
+
+function compileValue(raw: string, matchType: string): CompiledValue {
+  return {
+    raw,
+    lower: matchType === 'contains' ? raw.toLowerCase() : null,
+    regex: matchType === 'pattern' ? getCachedRegex(raw, 'i') : null,
+  };
+}
+
 export class BehavioralBaseline {
   profiles: Map<string, ToolProfile> = new Map();
   private readonly BASELINE_WINDOW = 100;
@@ -208,8 +258,37 @@ export class PolicyEngine {
   private judgeImpl: import('./llm-judge.js').LLMJudge | null = null;
   private baseliner: BehavioralBaseline = new BehavioralBaseline();
 
+  // Lazily built compiled view of config.rules. `compiledRules` preserves
+  // config order (used by order-sensitive paths); `sortedMatchRules` is the
+  // frequency-ordered evaluation view for the enforce loop.
+  private static readonly RESORT_INTERVAL = 2048;
+  private compiledRules: CompiledRule[] | null = null;
+  private compiledRedactRules: CompiledRule[] = [];
+  private sortedMatchRules: CompiledRule[] = [];
+  private evalsUntilResort = PolicyEngine.RESORT_INTERVAL;
+
   constructor(config: PolicyConfig) {
     this.config = structuredClone(config);
+  }
+
+  private invalidateCompiled(): void {
+    this.compiledRules = null;
+  }
+
+  private getCompiled(): void {
+    if (this.compiledRules !== null) return;
+
+    const all: CompiledRule[] = this.config.rules.map((rule, i) => ({
+      rule,
+      values: rule.values.map((v) => compileValue(v, rule.match)),
+      hits: 0,
+      order: i,
+    }));
+
+    this.compiledRules = all;
+    this.compiledRedactRules = all.filter((c) => c.rule.action === 'redact');
+    this.sortedMatchRules = all.filter((c) => c.rule.action !== 'redact');
+    this.evalsUntilResort = PolicyEngine.RESORT_INTERVAL;
   }
 
   setAuditTrail(trail: AuditTrail): void {
@@ -219,16 +298,16 @@ export class PolicyEngine {
   evaluate(toolName: string, toolDescription: string, args: Record<string, unknown>, _context?: EvaluateContext): EvaluateResult {
     const reasons: string[] = [];
     const redactedKeys = new Set<string>();
+    this.getCompiled();
 
-    for (const rule of this.config.rules) {
-      if (rule.action === 'redact') {
-        if (rule.timeWindow && !this.isWithinTimeWindow(rule.timeWindow)) continue;
-        const keys = this.getRedactKeys(args, rule);
-        for (const key of keys) {
-          redactedKeys.add(key);
-          if (!reasons.some((r) => r.startsWith(`[${rule.id}]`))) {
-            reasons.push(`[${rule.id}] ${rule.description}`);
-          }
+    for (const cr of this.compiledRedactRules) {
+      const rule = cr.rule;
+      if (rule.timeWindow && !this.isWithinTimeWindow(rule.timeWindow)) continue;
+      const keys = this.getRedactKeys(args, cr);
+      for (const key of keys) {
+        redactedKeys.add(key);
+        if (!reasons.some((r) => r.startsWith(`[${rule.id}]`))) {
+          reasons.push(`[${rule.id}] ${rule.description}`);
         }
       }
     }
@@ -256,12 +335,20 @@ export class PolicyEngine {
 
     let action: 'allow' | 'deny' | 'warn' | 'redact' = this.config.defaultAction as 'allow' | 'deny' | 'warn';
 
-    for (const rule of this.config.rules) {
-      if (rule.action === 'redact') continue;
+    // Collect arg strings once per call instead of once per rule.
+    const toolNameLower = toolName.toLowerCase();
+    const toolDescLower = toolDescription.toLowerCase();
+    const argStrings = this.collectArgStrings(args);
+    const argStringsLower = argStrings.map((s) => s.toLowerCase());
+
+    for (const cr of this.sortedMatchRules) {
+      const rule = cr.rule;
 
       if (rule.timeWindow && !this.isWithinTimeWindow(rule.timeWindow)) continue;
 
-      if (this.ruleMatches(rule, toolName, toolDescription, args)) {
+      if (this.ruleMatchesCompiled(cr, toolName, toolNameLower, toolDescription, toolDescLower, argStrings, argStringsLower, args)) {
+        cr.hits++;
+
         if (rule.contextCondition && !this.matchesContextCondition(rule, _context)) continue;
 
         if (rule.argConstraints && rule.argConstraints.length > 0) {
@@ -287,6 +374,15 @@ export class PolicyEngine {
           action = 'allow';
         }
       }
+    }
+
+    // Periodically re-order rules so the most frequently matched ones are
+    // evaluated first. The final action is order-invariant (any matching deny
+    // wins and short-circuits; otherwise warn > allow), so this only affects
+    // evaluation cost, not outcomes.
+    if (--this.evalsUntilResort <= 0) {
+      this.evalsUntilResort = PolicyEngine.RESORT_INTERVAL;
+      this.sortedMatchRules.sort((a, b) => b.hits - a.hits || a.order - b.order);
     }
 
     if (redactedKeys.size > 0 && action !== 'deny') {
@@ -363,6 +459,7 @@ export class PolicyEngine {
       throw new Error(`Rule with id "${rule.id}" already exists`);
     }
     this.config.rules.push(rule);
+    this.invalidateCompiled();
   }
 
   removeRule(id: string): void {
@@ -371,6 +468,7 @@ export class PolicyEngine {
       throw new Error(`Rule with id "${id}" not found`);
     }
     this.config.rules.splice(index, 1);
+    this.invalidateCompiled();
   }
 
   updateRule(id: string, partial: Partial<PolicyRule>): void {
@@ -379,10 +477,12 @@ export class PolicyEngine {
       throw new Error(`Rule with id "${id}" not found`);
     }
     this.config.rules[index] = { ...this.config.rules[index], ...partial };
+    this.invalidateCompiled();
   }
 
   async loadFromFile(yamlPath: string): Promise<void> {
     this.config = await this.resolveAndLoad(yamlPath, new Set<string>());
+    this.invalidateCompiled();
   }
 
   async saveToFile(yamlPath: string): Promise<void> {
@@ -408,11 +508,21 @@ export class PolicyEngine {
   }
 
   getEffectiveTimeout(toolName: string, toolDescription: string, args: Record<string, unknown>, fallbackMs: number = 30000): number {
-    for (const rule of this.config.rules) {
+    this.getCompiled();
+    const toolNameLower = toolName.toLowerCase();
+    const toolDescLower = toolDescription.toLowerCase();
+    const argStrings = this.collectArgStrings(args);
+    const argStringsLower = argStrings.map((s) => s.toLowerCase());
+
+    // Iterate compiledRules (original config order): when multiple rules with
+    // timeoutMs match, the first configured rule must win, so the
+    // frequency-sorted view cannot be used here.
+    for (const cr of this.compiledRules!) {
+      const rule = cr.rule;
       if (rule.action === 'redact') continue;
       if (rule.timeoutMs === undefined) continue;
       if (rule.timeWindow && !this.isWithinTimeWindow(rule.timeWindow)) continue;
-      if (this.ruleMatches(rule, toolName, toolDescription, args)) {
+      if (this.ruleMatchesCompiled(cr, toolName, toolNameLower, toolDescription, toolDescLower, argStrings, argStringsLower, args)) {
         return rule.timeoutMs;
       }
     }
@@ -704,11 +814,13 @@ export class PolicyEngine {
     };
   }
 
-  private getRedactKeys(args: Record<string, unknown>, rule: PolicyRule): string[] {
+  private getRedactKeys(args: Record<string, unknown>, cr: CompiledRule): string[] {
     const keys: string[] = [];
+    const matchType = cr.rule.match;
     for (const key of Object.keys(args)) {
-      for (const value of rule.values) {
-        if (this.matchesString(key, value, rule.match)) {
+      const keyLower = key.toLowerCase();
+      for (const cv of cr.values) {
+        if (this.matchCompiledValue(cv, matchType, key, keyLower)) {
           keys.push(key);
           break;
         }
@@ -717,51 +829,73 @@ export class PolicyEngine {
     return keys;
   }
 
-  private ruleMatches(
-    rule: PolicyRule,
+  private matchCompiledValue(cv: CompiledValue, matchType: string, input: string, inputLower: string): boolean {
+    switch (matchType) {
+      case 'exact':
+        return input === cv.raw;
+      case 'pattern':
+        return cv.regex !== null && cv.regex.test(input);
+      case 'contains':
+        return cv.lower !== null && inputLower.includes(cv.lower);
+      default:
+        return false;
+    }
+  }
+
+  private matchAnyArg(cv: CompiledValue, matchType: string, argStrings: string[], argStringsLower: string[]): boolean {
+    for (let i = 0; i < argStrings.length; i++) {
+      if (this.matchCompiledValue(cv, matchType, argStrings[i], argStringsLower[i])) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private ruleMatchesCompiled(
+    cr: CompiledRule,
     toolName: string,
+    toolNameLower: string,
     toolDescription: string,
+    toolDescLower: string,
+    argStrings: string[],
+    argStringsLower: string[],
     args: Record<string, unknown>,
   ): boolean {
-    const argStrings = this.collectArgStrings(args);
+    const rule = cr.rule;
+    const matchType = rule.match;
 
-    for (const value of rule.values) {
+    for (const cv of cr.values) {
       switch (rule.target) {
         case 'command':
           if (
-            this.matchesString(toolName, value, rule.match) ||
-            this.matchesString(toolDescription, value, rule.match)
+            this.matchCompiledValue(cv, matchType, toolName, toolNameLower) ||
+            this.matchCompiledValue(cv, matchType, toolDescription, toolDescLower)
           ) {
             return true;
           }
           break;
 
         case 'file':
-          if (argStrings.some((arg) => this.matchesString(arg, value, rule.match))) {
-            return true;
-          }
-          break;
-
         case 'network':
-          if (argStrings.some((arg) => this.matchesString(arg, value, rule.match))) {
+          if (this.matchAnyArg(cv, matchType, argStrings, argStringsLower)) {
             return true;
           }
           break;
 
         case 'env':
-          if (argStrings.some((arg) => this.matchesString(arg, value, rule.match))) {
+          if (this.matchAnyArg(cv, matchType, argStrings, argStringsLower)) {
             return true;
           }
-          if (this.matchesEnvVars(args, value, rule.match)) {
+          if (this.matchesEnvVarsCompiled(cv, matchType, args)) {
             return true;
           }
           break;
 
         case 'process':
           if (
-            this.matchesString(toolName, value, rule.match) ||
-            this.matchesString(toolDescription, value, rule.match) ||
-            argStrings.some((arg) => this.matchesString(arg, value, rule.match))
+            this.matchCompiledValue(cv, matchType, toolName, toolNameLower) ||
+            this.matchCompiledValue(cv, matchType, toolDescription, toolDescLower) ||
+            this.matchAnyArg(cv, matchType, argStrings, argStringsLower)
           ) {
             return true;
           }
@@ -772,35 +906,15 @@ export class PolicyEngine {
     return false;
   }
 
-  private matchesString(input: string, value: string, matchType: string): boolean {
-    switch (matchType) {
-      case 'exact':
-        return input === value;
-
-      case 'pattern':
-        try {
-          return new RegExp(value, 'i').test(input);
-        } catch {
-          return false;
-        }
-
-      case 'contains':
-        return input.toLowerCase().includes(value.toLowerCase());
-
-      default:
-        return false;
-    }
-  }
-
-  private matchesEnvVars(
-    args: Record<string, unknown>,
-    pattern: string,
+  private matchesEnvVarsCompiled(
+    cv: CompiledValue,
     matchType: string,
+    args: Record<string, unknown>,
   ): boolean {
     const env = args.env || args.environment || args.envVars;
     if (env && typeof env === 'object') {
       const keys = Object.keys(env as Record<string, unknown>);
-      return keys.some((key) => this.matchesString(key, pattern, matchType));
+      return keys.some((key) => this.matchCompiledValue(cv, matchType, key, key.toLowerCase()));
     }
     return false;
   }
@@ -867,11 +981,8 @@ export class PolicyEngine {
 
         case 'regex':
           if (!c.values.some((v: string) => {
-            try {
-              return new RegExp(v).test(strValue);
-            } catch {
-              return false;
-            }
+            const re = getCachedRegex(v, '');
+            return re !== null && re.test(strValue);
           })) {
             return {
               passed: false,

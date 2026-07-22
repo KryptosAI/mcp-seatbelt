@@ -8,16 +8,15 @@
  * servers). JSON-RPC requests are sent through the running proxy over HTTP
  * with fetch().
  *
- * Test 5 runs ProxyServer in-process instead: the proxy derives its
- * attack-chain sessionId from `${serverName}_${Date.now()}` on every
- * request, so a multi-request chain can only be observed through the HTTP
- * proxy when Date.now() is pinned to a constant.
+ * Test 5 runs ProxyServer in-process instead: the proxy tracks attack chains
+ * with a stable per-server session id, so a multi-request chain escalates
+ * across HTTP calls to the same registered server.
  *
  * Resilience: describes that need the real @modelcontextprotocol servers are
  * skipped (describe.skipIf) when those packages are not installed.
  */
 
-import { describe, it, expect, beforeEach, afterEach, afterAll, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, afterAll } from 'vitest';
 import { spawn, execFileSync, type ChildProcess } from 'node:child_process';
 import { existsSync, mkdirSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -549,13 +548,12 @@ rl.on('line', (line) => {
 // ---------------------------------------------------------------------------
 
 describe('Test 5: attack chain detection through proxy', () => {
-  // The proxy builds its chain-tracking sessionId as `${serverName}_${Date.now()}`
-  // per request. Pinning Date.now() gives the whole request sequence one
-  // shared session so the chain can escalate exactly as it would for a real
-  // agent session.
+  // The proxy tracks attack chains with a stable per-server session id, so a
+  // sequence of calls through the same registered server escalates exactly as
+  // it would for a real agent session.
   const FIXED_NOW = 1_700_000_000_000;
   const SERVER_NAME = 'attackfs';
-  const SESSION_ID = `${SERVER_NAME}_${FIXED_NOW}`;
+  const SESSION_ID = SERVER_NAME;
 
   const ECHO_SERVER_SCRIPT = `
 const rl = require('readline').createInterface({ input: process.stdin });
@@ -569,11 +567,8 @@ rl.on('line', (line) => {
 `;
 
   let proxy: ProxyServer | undefined;
-  let dateSpy: ReturnType<typeof vi.spyOn> | undefined;
 
   afterEach(async () => {
-    dateSpy?.mockRestore();
-    dateSpy = undefined;
     cleanupSession(SESSION_ID);
     if (proxy) {
       try { await proxy.stop(); } catch {}
@@ -588,8 +583,6 @@ rl.on('line', (line) => {
   }
 
   it('escalates read /etc/passwd -> write authorized_keys and blocks on exfiltration', async () => {
-    dateSpy = vi.spyOn(Date, 'now').mockReturnValue(FIXED_NOW);
-
     const policy = new PolicyEngine({
       version: '1',
       mode: 'enforce',
