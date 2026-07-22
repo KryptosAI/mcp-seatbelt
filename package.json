@@ -1,6 +1,6 @@
 {
   "name": "@kryptosai/mcp-seatbelt",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "MCP runtime security proxy. Block dangerous AI agent tool calls with a policy engine, DLP, RBAC, threat intel, and audit trail. Detect attack chains, validate schemas, and enforce compliance.",
   "main": "dist/index.js",
   "bin": {
