@@ -6,7 +6,7 @@
 <meta name="description" content="MCP Security Platform — Scan Before You Trust. Enforce at Runtime. The only open-source platform that secures MCP servers from install to runtime.">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0%25' y1='0%25' x2='100%25' y2='100%25'%3E%3Cstop offset='0%25' style='stop-color:%233b82f6'/%3E%3Cstop offset='100%25' style='stop-color:%238b5cf6'/%3E%3C/linearGradient%3E%3C/defs%3E%3Cpath d='M16 2L4 7v10c0 7.6 5.1 14.7 12 16 6.9-1.3 12-8.4 12-16V7L16 2z' fill='url(%23g)'/%3E%3Cpath d='M11 16l3 3 7-7' fill='none' stroke='%23fff' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
 <meta property="og:title" content="MCP Security Platform — Scan Before You Trust. Enforce at Runtime.">
-<meta property="og:description" content="Open-source MCP security scanning (mcp-observatory) and runtime enforcement (mcp-seatbelt). 959 tests. 38+ CLI commands. MIT licensed.">
+<meta property="og:description" content="Open-source MCP security scanning (mcp-observatory) and runtime enforcement (mcp-seatbelt). 1134 tests. 38+ CLI commands. MIT licensed.">
 <meta property="og:image" content="https://kryptosai.github.io/mcp-seatbelt/demo.gif">
 <meta property="og:image:width" content="1050">
 <meta property="og:image:height" content="650">
@@ -15,7 +15,7 @@
 <meta property="og:type" content="website">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="MCP Security Platform — Scan Before You Trust. Enforce at Runtime.">
-<meta name="twitter:description" content="Open-source MCP security scanning (mcp-observatory) and runtime enforcement (mcp-seatbelt). 959 tests. 38+ CLI commands. MIT licensed.">
+<meta name="twitter:description" content="Open-source MCP security scanning (mcp-observatory) and runtime enforcement (mcp-seatbelt). 1134 tests. 38+ CLI commands. MIT licensed.">
 <meta name="twitter:image" content="https://kryptosai.github.io/mcp-seatbelt/demo.gif">
 <title>MCP Security Platform — Scan Before You Trust. Enforce at Runtime.</title>
 <style>
@@ -470,7 +470,7 @@ code, pre, .mono {
     <a href="https://github.com/KryptosAI/mcp-seatbelt" target="_blank" rel="noopener" class="btn btn-secondary">GitHub →</a>
     <a href="https://github.com/KryptosAI/mcp-observatory" target="_blank" rel="noopener" class="btn btn-secondary">Observatory →</a>
   </div>
-  <p style="color:var(--text-muted);font-size:0.82rem;margin-bottom:32px;">Built with TypeScript · MIT Licensed · 959 tests · Zero Dependencies</p>
+  <p style="color:var(--text-muted);font-size:0.82rem;margin-bottom:32px;">Built with TypeScript · MIT Licensed · 1134 tests · Zero Dependencies</p>
   <div class="demo-container">
     <img src="demo.gif" alt="MCP Security Platform demo" loading="lazy">
   </div>
@@ -520,7 +520,7 @@ code, pre, .mono {
         <li><code>npx @kryptosai/mcp-observatory</code></li>
       </ul>
       <div class="card-stats">
-        <div class="card-stat"><strong>474</strong> tests</div>
+        <div class="card-stat"><strong>642</strong> tests</div>
         <div class="card-stat"><strong>22+</strong> CLI commands</div>
       </div>
       <div style="display:flex;gap:8px;margin-bottom:18px;flex-wrap:wrap;">
@@ -547,7 +547,7 @@ code, pre, .mono {
         <li><code>npx @kryptosai/mcp-seatbelt</code></li>
       </ul>
       <div class="card-stats">
-        <div class="card-stat"><strong>485</strong> tests</div>
+        <div class="card-stat"><strong>492</strong> tests</div>
         <div class="card-stat"><strong>18</strong> test files</div>
         <div class="card-stat"><strong>16</strong> CLI commands</div>
       </div>
@@ -721,6 +721,29 @@ code, pre, .mono {
   </div>
 </section>
 
+<!-- ───── Performance ───── -->
+<section class="section" id="performance">
+  <div class="section-label">Performance</div>
+  <h2 class="section-title">Fast. Really fast.</h2>
+  <div class="feature-grid">
+    <div class="feature-card">
+      <h3>3,000+ req/s</h3>
+      <p>Proxy throughput on a developer laptop. Zero dropped requests across 6 scenarios.</p>
+    </div>
+    <div class="feature-card">
+      <h3>1.5 µs</h3>
+      <p>Policy evaluation latency. A single rule check takes microseconds — not milliseconds.</p>
+    </div>
+    <div class="feature-card">
+      <h3>74 MB</h3>
+      <p>Flat RSS under 10,000 requests. No memory leaks, no growth under sustained load.</p>
+    </div>
+  </div>
+  <p style="color:var(--text-secondary);margin-top:16px;font-size:0.9rem;">
+    Benchmarked on Node.js 22, macOS, Apple M-series. Run <code>mcp-seatbelt benchmark</code> on your own hardware.
+  </p>
+</section>
+
 <!-- ───── Quick Start ───── -->
 <section class="section" id="quickstart">
   <div class="section-label">Quick Start</div>
@@ -788,7 +811,7 @@ code, pre, .mono {
 <div class="stats-bar">
   <div class="stats-grid" id="statsGrid">
     <div class="stat-box">
-      <div class="stat-box-number" data-target="959" data-prefix="474 + 485 = ">474 + 485 = 959</div>
+      <div class="stat-box-number" data-target="959" data-prefix="474 + 485 = ">642 + 492 = 1134</div>
       <div class="stat-box-label">Tests</div>
     </div>
     <div class="stat-box">
