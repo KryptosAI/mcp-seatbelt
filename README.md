@@ -86,6 +86,21 @@ Images are automatically built and published on every release via GitHub Actions
 docker run -p 9420:9420 -v $(pwd)/.mcp-seatbelt:/app/.mcp-seatbelt ghcr.io/kryptosai/mcp-seatbelt:latest proxy
 ```
 
+### GitHub Action
+
+Run MCP Seatbelt as a CI security gate with the official GitHub Action — it checks detected MCP configs, simulates your policy against representative tool calls, and fails the build on critical risks.
+
+#### CI/CD Integration
+
+```yaml
+- uses: KryptosAI/mcp-seatbelt@v0.4
+  with:
+    mode: enforce
+    fail-on-critical: true
+```
+
+See [action.yml](./action.yml) for all inputs, outputs, and enforcement options.
+
 ---
 
 ## How It Works

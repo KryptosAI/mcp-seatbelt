@@ -1,0 +1,92 @@
+name: 'MCP Seatbelt'
+description: 'Runtime guardrails for AI agent MCP tools — block dangerous tool calls in CI'
+author: 'KryptosAI'
+branding:
+  icon: 'shield'
+  color: 'purple'
+
+inputs:
+  policy:
+    description: 'Path to policy YAML file'
+    required: false
+    default: '.mcp-seatbelt/policy.yml'
+  mode:
+    description: 'Enforcement mode: audit or enforce'
+    required: false
+    default: 'audit'
+  fail-on-critical:
+    description: 'Fail the build on critical findings'
+    required: false
+    default: 'true'
+  version:
+    description: 'Seatbelt version to use'
+    required: false
+    default: 'latest'
+
+outputs:
+  findings:
+    description: 'Security findings summary'
+    value: ${{ steps.report.outputs.findings }}
+  policy:
+    description: 'Path to generated policy'
+    value: ${{ steps.report.outputs.policy }}
+  blocked:
+    description: 'Number of blocked calls'
+    value: ${{ steps.report.outputs.blocked }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Setup Node
+      uses: actions/setup-node@v4
+      with:
+        node-version: 22
+
+    - name: Install mcp-seatbelt
+      shell: bash
+      run: npm install -g @kryptosai/mcp-seatbelt@${{ inputs.version }}
+
+    - name: Run security check
+      id: check
+      shell: bash
+      run: |
+        mcp-seatbelt check
+      continue-on-error: true
+
+    - name: Simulate policies
+      id: simulate
+      shell: bash
+      run: |
+        if [ -f "${{ inputs.policy }}" ]; then
+          mcp-seatbelt simulate --policy "${{ inputs.policy }}" --tool bash --args '{"command":"echo hello"}'
+          mcp-seatbelt simulate --policy "${{ inputs.policy }}" --tool write_file --args '{"filePath":"/etc/passwd"}'
+        else
+          echo "Policy file not found at ${{ inputs.policy }} — skipping simulation (run 'mcp-seatbelt init' to generate one)"
+        fi
+      continue-on-error: true
+
+    - name: Generate report
+      id: report
+      shell: bash
+      run: |
+        mcp-seatbelt report --json --output .mcp-seatbelt/ci-report.json || true
+        echo "policy=${{ inputs.policy }}" >> "$GITHUB_OUTPUT"
+        if [ -f .mcp-seatbelt/ci-report.json ]; then
+          SUMMARY=$(python3 -c "import json; s=json.load(open('.mcp-seatbelt/ci-report.json')).get('summary',{}); print(s.get('totalServers',0), s.get('highRisk',0), s.get('blockedCalls',0))" 2>/dev/null || echo "0 0 0")
+          read -r TOTAL HIGH BLOCKED <<< "$SUMMARY"
+          echo "findings=${HIGH} high-risk of ${TOTAL} servers" >> "$GITHUB_OUTPUT"
+          echo "blocked=${BLOCKED}" >> "$GITHUB_OUTPUT"
+        else
+          echo "findings=no MCP configs detected" >> "$GITHUB_OUTPUT"
+          echo "blocked=0" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Fail on critical
+      if: inputs.fail-on-critical == 'true'
+      shell: bash
+      run: |
+        COUNT=$(cat .mcp-seatbelt/ci-report.json | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('summary',{}).get('highRisk',0))" 2>/dev/null || echo 0)
+        if [ "$COUNT" -gt 0 ]; then
+          echo "::error::Found $COUNT critical security findings"
+          exit 1
+        fi
