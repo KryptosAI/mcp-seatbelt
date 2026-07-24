@@ -17,11 +17,14 @@ jobs:
         with:
           node-version: 22
 
-      - name: Install mcp-publisher
-        run: brew install mcp-publisher
+      - name: Download mcp-publisher
+        run: |
+          curl -L -o /tmp/mcp-publisher.tar.gz https://github.com/modelcontextprotocol/registry/releases/download/v1.8.0/mcp-publisher_linux_amd64.tar.gz
+          tar -xzf /tmp/mcp-publisher.tar.gz -C /tmp
+          chmod +x /tmp/mcp-publisher
 
       - name: Authenticate with GitHub OIDC
-        run: mcp-publisher login github-oidc
+        run: /tmp/mcp-publisher login github-oidc
 
       - name: Publish to MCP Registry
-        run: mcp-publisher publish
+        run: /tmp/mcp-publisher publish
