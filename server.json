@@ -9,30 +9,11 @@
       "identifier": "@kryptosai/mcp-seatbelt",
       "version": "0.5.0",
       "transport": {
-        "type": "stdio",
-        "command": "npx",
-        "args": [
-          "@kryptosai/mcp-seatbelt",
-          "proxy"
-        ]
+        "type": "stdio"
       }
     }
   ],
   "repository": {
-    "type": "git",
     "url": "https://github.com/KryptosAI/mcp-seatbelt"
-  },
-  "metadata": {
-    "category": "Security",
-    "tags": [
-      "mcp-security",
-      "mcp-proxy",
-      "guardrails",
-      "policy-engine",
-      "dlp",
-      "rbac",
-      "threat-intel",
-      "audit-trail"
-    ]
   }
 }
