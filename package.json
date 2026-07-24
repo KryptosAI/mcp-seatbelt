@@ -94,5 +94,5 @@
     "typescript": "^5.6.0",
     "vitest": "^2.0.0"
   },
-  "mcpName": "io.github.kryptosai/mcp-seatbelt"
+  "mcpName": "io.github.KryptosAI/mcp-seatbelt"
 }

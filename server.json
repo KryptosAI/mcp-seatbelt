@@ -1,6 +1,6 @@
 {
   "$schema": "https://registry.modelcontextprotocol.io/schemas/server.schema.json",
-  "name": "io.github.kryptosai/mcp-seatbelt",
+  "name": "io.github.KryptosAI/mcp-seatbelt",
   "description": "MCP runtime security proxy. Blocks dangerous AI agent tool calls with a policy engine.",
   "version": "0.5.0",
   "url": "https://github.com/KryptosAI/mcp-seatbelt",
