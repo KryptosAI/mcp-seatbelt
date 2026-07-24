@@ -1,7 +1,7 @@
 {
   "$schema": "https://registry.modelcontextprotocol.io/schemas/server.schema.json",
   "name": "io.github.kryptosai/mcp-seatbelt",
-  "description": "MCP runtime security proxy. Blocks dangerous AI agent tool calls with a policy engine, DLP, RBAC, threat intel, and audit trail.",
+  "description": "MCP runtime security proxy. Blocks dangerous AI agent tool calls with a policy engine.",
   "version": "0.5.0",
   "url": "https://github.com/KryptosAI/mcp-seatbelt",
   "repository": {
@@ -16,10 +16,22 @@
   "runtime": {
     "type": "stdio",
     "command": "npx",
-    "args": ["@kryptosai/mcp-seatbelt", "proxy"]
+    "args": [
+      "@kryptosai/mcp-seatbelt",
+      "proxy"
+    ]
   },
   "metadata": {
     "category": "Security",
-    "tags": ["mcp-security", "mcp-proxy", "guardrails", "policy-engine", "dlp", "rbac", "threat-intel", "audit-trail"]
+    "tags": [
+      "mcp-security",
+      "mcp-proxy",
+      "guardrails",
+      "policy-engine",
+      "dlp",
+      "rbac",
+      "threat-intel",
+      "audit-trail"
+    ]
   }
 }
