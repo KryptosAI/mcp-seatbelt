@@ -1,0 +1,24 @@
+{
+  "name": "io.github.kryptosai/mcp-seatbelt",
+  "description": "Runtime guardrails for AI agent MCP tools. Blocks dangerous tool calls at the protocol layer with a policy proxy, DLP, RBAC, threat intel, and audit trail.",
+  "version": "0.5.0",
+  "url": "https://github.com/KryptosAI/mcp-seatbelt",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/KryptosAI/mcp-seatbelt"
+  },
+  "package": {
+    "registry": "npm",
+    "name": "@kryptosai/mcp-seatbelt",
+    "version": "0.5.0"
+  },
+  "runtime": {
+    "type": "stdio",
+    "command": "npx",
+    "args": ["@kryptosai/mcp-seatbelt", "proxy"]
+  },
+  "metadata": {
+    "category": "Security",
+    "tags": ["mcp-security", "mcp-proxy", "guardrails", "policy-engine", "dlp", "rbac", "threat-intel", "audit-trail"]
+  }
+}
