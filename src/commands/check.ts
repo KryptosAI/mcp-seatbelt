@@ -1,7 +1,32 @@
 import chalk from "chalk";
+import { existsSync, readFileSync } from "node:fs";
 import { detectAll } from "../detectors/index.js";
+import { parsePolicy } from "../policy/yaml.js";
 
-export async function checkCommand(): Promise<void> {
+export interface CheckCommandOptions {
+  policyPath?: string;
+  policyOnly?: boolean;
+}
+
+export async function checkCommand(opts: CheckCommandOptions = {}): Promise<void> {
+  if (opts.policyPath && existsSync(opts.policyPath)) {
+    try {
+      parsePolicy(readFileSync(opts.policyPath, "utf-8"));
+      console.log(chalk.green(`✓ Policy is valid: ${opts.policyPath}`));
+    } catch (error) {
+      console.error(
+        chalk.red(
+          `Invalid policy ${opts.policyPath}:\n${error instanceof Error ? error.message : String(error)}`,
+        ),
+      );
+      process.exit(1);
+    }
+  } else if (opts.policyOnly) {
+    console.error(chalk.red(`Policy file not found: ${opts.policyPath ?? "(not specified)"}`));
+    process.exit(1);
+  }
+  if (opts.policyOnly) return;
+
   console.log(chalk.cyan("\n🔍 Quick MCP risk check...\n"));
 
   const configs = await detectAll();
