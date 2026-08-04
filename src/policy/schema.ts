@@ -1,4 +1,5 @@
 import type { PolicyConfig, PolicyRule } from '../types.js';
+import { validatePolicyStructure } from './json-schema.js';
 
 const VALID_TARGETS = ['command', 'file', 'network', 'env', 'process'] as const;
 const VALID_MATCHES = ['exact', 'pattern', 'contains'] as const;
@@ -9,6 +10,7 @@ export function validatePolicy(config: unknown): PolicyConfig {
   if (!config || typeof config !== 'object') {
     throw new Error('Policy config must be a non-null object');
   }
+  validatePolicyStructure(config);
 
   const obj = config as Record<string, unknown>;
 
@@ -88,6 +90,7 @@ export function validatePolicy(config: unknown): PolicyConfig {
       envVars: allowlist.envVars as string[],
     },
     allowSampling: typeof obj.allowSampling === 'boolean' ? obj.allowSampling : true,
+    ...(Array.isArray(obj.extends) ? { extends: obj.extends as string[] } : {}),
     ...(typeof obj.defaultTimeoutMs === 'number' ? { defaultTimeoutMs: obj.defaultTimeoutMs as number } : {}),
     ...(notifications ? { notifications } : {}),
   };

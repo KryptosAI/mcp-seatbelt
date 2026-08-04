@@ -381,6 +381,20 @@ describe('PolicyEngine', () => {
 });
 
 describe('validatePolicy', () => {
+  it('reports all unknown fields with their paths', () => {
+    const base = makeEnforcePolicy();
+    const config = {
+      ...base,
+      defaultActon: 'deny',
+      allowlist: {
+        ...base.allowlist,
+        envVar: [],
+      },
+    };
+
+    expect(() => validatePolicy(config)).toThrow(/defaultActon[\s\S]*allowlist\.envVar/);
+  });
+
   it('accepts a valid policy config', () => {
     const config = makeEnforcePolicy([denyEvalRule]);
     const result = validatePolicy(config);

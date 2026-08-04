@@ -46,6 +46,41 @@ describe('CLI arg parsing', () => {
     expect(stdout).toContain('--output');
     expect(stdout).toContain('--json');
   });
+
+  it('check --policy-only rejects an unknown policy field before scanning', async () => {
+    const dir = tmpDir();
+    const policyPath = join(dir, 'policy.yml');
+    writeFileSync(
+      policyPath,
+      [
+        "version: '1'",
+        'mode: enforce',
+        'defaultAction: deny',
+        'defaultActon: deny',
+        'rules: []',
+        'allowlist:',
+        '  tools: []',
+        '  paths: []',
+        '  hosts: []',
+        '  envVars: []',
+      ].join('\n'),
+      'utf-8',
+    );
+
+    try {
+      await expect(
+        execFileAsync(tsxPath, [
+          cliEntry,
+          'check',
+          '--policy',
+          policyPath,
+          '--policy-only',
+        ]),
+      ).rejects.toMatchObject({ code: 1 });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('CLI commands', () => {

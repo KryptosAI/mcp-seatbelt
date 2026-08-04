@@ -5,6 +5,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Validate shipped policy template
+        run: node dist/index.js check --policy templates/.mcp-seatbelt.yml --policy-only
       - uses: KryptosAI/mcp-seatbelt@v0.4
         with:
           mode: enforce

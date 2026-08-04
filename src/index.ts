@@ -85,9 +85,14 @@ program
 program
   .command("check")
   .description("Quick check: detect configs and show risk summary (no files written)")
-  .action(async () => {
+  .option("-p, --policy <path>", "Validate a policy before scanning", ".mcp-seatbelt/policy.yml")
+  .option("--policy-only", "Validate the policy without scanning MCP configs")
+  .action(async (opts) => {
     const { checkCommand } = await import("./commands/check.js");
-    await checkCommand();
+    await checkCommand({
+      policyPath: opts.policy as string,
+      policyOnly: Boolean(opts.policyOnly),
+    });
   });
 
 program
