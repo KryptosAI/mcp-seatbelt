@@ -355,7 +355,7 @@ export const DEFAULT_TEMPLATES: Record<string, PolicyConfig> = {
   },
 };
 
-export function generateDefaultPolicy(configs: McpClientConfig[], mode: string = "audit"): PolicyConfig {
+export function generateDefaultPolicy(configs: McpClientConfig[], mode: string = "enforce"): PolicyConfig {
   const allTools = new Set<string>();
   const allHosts = new Set<string>();
 

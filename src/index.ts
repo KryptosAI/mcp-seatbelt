@@ -20,7 +20,7 @@ program
   .command("init")
   .description("Detect MCP configs, assess risk, generate policy")
   .option("-o, --output <path>", "Output directory", ".mcp-seatbelt")
-  .option("--policy <mode>", "Policy mode: audit or enforce", "audit")
+  .option("--policy <mode>", "Policy mode: audit or enforce", "enforce")
   .option("--yes", "Skip prompts and update client configs automatically")
   .action(async (opts) => {
     const { initCommand } = await import("./commands/init.js");
