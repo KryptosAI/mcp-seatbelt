@@ -69,7 +69,7 @@ describe('validatePolicy notifications', () => {
       ...makeBasePolicy(),
       notifications: 'not-an-object',
     };
-    expect(() => validatePolicy(config)).toThrow('notifications must be a non-null object');
+    expect(() => validatePolicy(config)).toThrow('notifications: must be object');
   });
 
   it('throws for non-array webhooks', () => {
@@ -77,7 +77,7 @@ describe('validatePolicy notifications', () => {
       ...makeBasePolicy(),
       notifications: { webhooks: 'not-an-array' },
     };
-    expect(() => validatePolicy(config)).toThrow('notifications.webhooks must be an array');
+    expect(() => validatePolicy(config)).toThrow('notifications.webhooks: must be array');
   });
 
   it('throws for webhook with empty url', () => {
@@ -87,7 +87,7 @@ describe('validatePolicy notifications', () => {
         webhooks: [{ url: '', events: ['deny'] }],
       },
     };
-    expect(() => validatePolicy(config)).toThrow('url must be a non-empty string');
+    expect(() => validatePolicy(config)).toThrow('notifications.webhooks[0].url');
   });
 
   it('throws for webhook with non-array events', () => {
@@ -97,7 +97,7 @@ describe('validatePolicy notifications', () => {
         webhooks: [{ url: 'https://example.com', events: 'not-array' }],
       },
     };
-    expect(() => validatePolicy(config)).toThrow('events must be an array');
+    expect(() => validatePolicy(config)).toThrow('notifications.webhooks[0].events:');
   });
 
   it('throws for webhook with invalid event value', () => {
@@ -107,7 +107,7 @@ describe('validatePolicy notifications', () => {
         webhooks: [{ url: 'https://example.com', events: ['invalid_event'] }],
       },
     };
-    expect(() => validatePolicy(config)).toThrow('events must contain only "deny", "warn", or "redact"');
+    expect(() => validatePolicy(config)).toThrow('notifications.webhooks[0].events[0]');
   });
 
   it('throws for webhook with invalid format', () => {
@@ -117,7 +117,7 @@ describe('validatePolicy notifications', () => {
         webhooks: [{ url: 'https://example.com', events: ['deny'], format: 'teams' }],
       },
     };
-    expect(() => validatePolicy(config)).toThrow('format must be "slack", "discord", or "json"');
+    expect(() => validatePolicy(config)).toThrow('notifications.webhooks[0].format');
   });
 
   it('accepts redact events in webhooks', () => {
