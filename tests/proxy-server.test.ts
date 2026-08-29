@@ -167,6 +167,62 @@ describe('ProxyServer', () => {
     await proxy.stop();
   });
 
+  it('GET /:serverName/ping returns 200 for a healthy upstream', async () => {
+    const echoScript = nodeEchoScript('{}');
+    policy = new PolicyEngine(makePolicyConfig());
+    proxy = new ProxyServer(policy, 0, { defaultTimeoutMs: 100 });
+    proxy.registerServer(makeMcpServerConfig({
+      name: 'healthy',
+      command: 'node',
+      args: ['-e', echoScript.trim()],
+    }));
+    await proxy.start();
+
+    const addr = (proxy as any).httpServer?.address();
+    const response = await fetch(`http://localhost:${addr?.port}/healthy/ping`);
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ status: 'ok' });
+  });
+
+  it('GET /:serverName/ping returns 503 when the upstream times out', async () => {
+    const script = `
+      const rl = require('readline').createInterface({ input: process.stdin });
+      rl.on('line', (line) => {
+        const req = JSON.parse(line);
+        if (req.method !== 'ping') {
+          console.log(JSON.stringify({ jsonrpc: '2.0', result: {}, id: req.id }));
+        }
+      });
+    `;
+    policy = new PolicyEngine(makePolicyConfig());
+    proxy = new ProxyServer(policy, 0, { defaultTimeoutMs: 25 });
+    proxy.registerServer(makeMcpServerConfig({
+      name: 'hung',
+      command: 'node',
+      args: ['-e', script.trim()],
+    }));
+    await proxy.start();
+
+    const addr = (proxy as any).httpServer?.address();
+    const response = await fetch(`http://localhost:${addr?.port}/hung/ping`);
+
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ status: 'unavailable', server: 'hung' });
+  });
+
+  it('GET /:serverName/ping returns 404 for an unknown upstream', async () => {
+    policy = new PolicyEngine(makePolicyConfig());
+    proxy = new ProxyServer(policy, 0);
+    await proxy.start();
+
+    const addr = (proxy as any).httpServer?.address();
+    const response = await fetch(`http://localhost:${addr?.port}/missing/ping`);
+
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ status: 'unknown', server: 'missing' });
+  });
+
   it('POST /:serverName returns 404 for unknown server', async () => {
     policy = new PolicyEngine(makePolicyConfig());
     proxy = new ProxyServer(policy, 0);

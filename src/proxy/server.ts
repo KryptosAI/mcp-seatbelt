@@ -657,6 +657,7 @@ export class ProxyServer {
   private requestTimestamps: number[] = [];
   private requestTimestampsStart = 0;
   private readonly THROUGHPUT_WINDOW_MS = 5000;
+  private healthCheckSequence = 0;
 
   constructor(policy: PolicyEngine, port: number = 9420, options?: ProxyServerOptions) {
     this.policy = policy;
@@ -973,6 +974,35 @@ export class ProxyServer {
           risk: s.risk,
         })),
       });
+    });
+
+    this.app.get('/:serverName/ping', async (req: Request, res: Response) => {
+      const { serverName } = req.params;
+
+      if (!this.servers.has(serverName)) {
+        res.status(404).json({ status: 'unknown', server: serverName });
+        return;
+      }
+
+      const client = this.clients.get(serverName);
+      if (!client) {
+        res.status(503).json({ status: 'unavailable', server: serverName });
+        return;
+      }
+
+      try {
+        await client.send(
+          {
+            jsonrpc: '2.0',
+            method: 'ping',
+            id: `health-${++this.healthCheckSequence}`,
+          },
+          this.defaultTimeoutMs,
+        );
+        res.json({ status: 'ok' });
+      } catch {
+        res.status(503).json({ status: 'unavailable', server: serverName });
+      }
     });
 
     this.app.post('/:serverName', async (req: Request, res: Response) => {
